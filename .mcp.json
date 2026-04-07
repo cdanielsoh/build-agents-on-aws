@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "strands-agents": {
+      "command": "uvx",
+      "args": ["strands-agents-mcp-server"],
+      "env": {},
+      "disabled": false,
+      "autoApprove": ["search_docs", "fetch_doc"],
+      "logLevel": "error"
+    },
+    "agentcore": {
+      "command": "uvx",
+      "args": ["awslabs.amazon-bedrock-agentcore-mcp-server@latest"],
+      "env": {},
+      "disabled": false,
+      "autoApprove": [
+        "search_documentation",
+        "get_document",
+        "list_documents",
+        "search_runtime_docs",
+        "search_memory_docs",
+        "search_gateway_docs"
+      ],
+      "logLevel": "error"
+    }
+  }
+}

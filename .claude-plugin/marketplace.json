@@ -1,0 +1,17 @@
+{
+  "name": "build-agents-on-aws",
+  "owner": {
+    "name": "cdanielsoh"
+  },
+  "metadata": {
+    "description": "Claude Code plugin for designing and deploying production-grade AI agents with Strands Agents SDK and Amazon Bedrock AgentCore."
+  },
+  "plugins": [
+    {
+      "name": "build-agents-on-aws",
+      "source": "./",
+      "description": "Design and deploy production-grade AI agents on AWS. Covers Strands Agents SDK design patterns and Bedrock AgentCore deployment.",
+      "version": "1.0.0"
+    }
+  ]
+}
