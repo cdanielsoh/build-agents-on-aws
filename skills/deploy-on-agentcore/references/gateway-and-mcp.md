@@ -4,9 +4,9 @@
 1. [MCP Gateway Architecture](#mcp-gateway-architecture)
 2. [Target Types: Not Just Tools](#target-types-not-just-tools)
 3. [Interceptor Lambda](#interceptor-lambda)
-3. [Lambda MCP Server Handler](#lambda-mcp-server-handler)
-4. [Direct vs Adapter Pattern](#direct-vs-adapter-pattern)
-5. [MCP Client in the Agent](#mcp-client-in-the-agent)
+4. [Lambda MCP Server Handler](#lambda-mcp-server-handler)
+5. [Direct vs Adapter Pattern](#direct-vs-adapter-pattern)
+6. [MCP Client in the Agent](#mcp-client-in-the-agent)
 
 ---
 
