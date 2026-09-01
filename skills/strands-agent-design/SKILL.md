@@ -90,6 +90,7 @@ Each pillar has a dedicated reference file with patterns, code examples, and rat
 | Formalize system prompt boundary model                 | `references/prompt-architecture.md` |
 | Use deferred tool loading to scale past 15 tools       | `references/agent-topology.md`      |
 | Implement schema-level progressive disclosure (meta-tooling) | `references/meta-tooling.md`  |
+| Scale past ~15 tools when they are behind a Gateway     | `deploy-on-agentcore` → `gateway-and-mcp.md` |
 | Group tools into categories with ToolCategory/Registry | `references/meta-tooling.md`        |
 | Route between local tools and MCP tools transparently  | `references/meta-tooling.md`        |
 | Choose between single agent, Graph, Swarm, Workflow    | `references/agent-topology.md`      |
@@ -236,6 +237,11 @@ and are guarded against in the template:
    without any regression having occurred.
 
 ### 12. Meta-Tooling (Experimental — Schema-Level Progressive Disclosure)
+
+**If the tools are behind an AgentCore Gateway, use its built-in semantic search instead** —
+`x_amz_bedrock_agentcore_search` solves the same problem with no custom registry and no way for
+the catalogue to drift from the real tool set. Meta-tooling is for local tools, mixed local/MCP
+fleets, or when you need control over the disclosure levels.
 
 When tool count exceeds ~15 but the domain is cohesive, meta-tooling reduces schema token overhead by registering only 2 meta-tools (`get_tool_info`, `use_tool`) and embedding a brief category catalog in the system prompt. Schemas are fetched on demand when the agent decides to use a category. Achieves ~76% first-cycle token savings with stable prompt cache (tool definitions never change). Supports both local tools and MCP tools through transparent routing.
 

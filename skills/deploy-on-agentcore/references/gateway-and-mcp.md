@@ -4,9 +4,11 @@
 1. [MCP Gateway Architecture](#mcp-gateway-architecture)
 2. [Target Types: Not Just Tools](#target-types-not-just-tools)
 3. [Interceptors](#interceptors)
-4. [Lambda MCP Server Handler](#lambda-mcp-server-handler)
-5. [Direct vs Adapter Pattern](#direct-vs-adapter-pattern)
-6. [MCP Client in the Agent](#mcp-client-in-the-agent)
+4. [Native Tool Search](#native-tool-search-x_amz_bedrock_agentcore_search)
+5. [Rate Limits](#rate-limits)
+6. [Lambda MCP Server Handler](#lambda-mcp-server-handler)
+7. [Direct vs Adapter Pattern](#direct-vs-adapter-pattern)
+8. [MCP Client in the Agent](#mcp-client-in-the-agent)
 
 ---
 
@@ -406,6 +408,89 @@ gateway role into a general-purpose Lambda invoker.
 - **Interceptors are not a substitute for Cedar.** Cedar decides *which tool*, declaratively
   and reviewably; the interceptor carries identity through to the data layer. See
   [policy.md](policy.md).
+
+---
+
+## Native Tool Search (`x_amz_bedrock_agentcore_search`)
+
+Enable semantic search at gateway creation and the Gateway exposes a built-in tool that finds
+tools by natural-language query:
+
+```python
+mcp_client.call_tool_sync(
+    tool_use_id="tool-123",
+    name="x_amz_bedrock_agentcore_search",
+    arguments={"query": "find order information"},
+)
+```
+
+**This is the managed answer to "too many tools to put in the prompt."** Before hand-rolling
+schema-level progressive disclosure, check whether this covers the case — it needs no custom
+registry, no meta-tool prompt engineering, and the tool inventory cannot drift from what the
+gateway actually exposes. The `strands-agent-design` skill's `references/meta-tooling.md`
+pattern remains useful for *local* tools, mixed local/MCP fleets, or when you need control over
+the disclosure levels; for gateway tools alone, prefer this.
+
+Two constraints:
+
+- **Regional.** Supported in 18 regions at the time of writing (including `us-east-1`,
+  `us-west-2`, `eu-west-1`, `ap-northeast-1/2`). Verify yours before designing around it.
+- **Protocol version.** The gateway accepts only versions listed in
+  `protocolConfiguration.mcp.supportedVersions`. On `2026-07-28` each request additionally
+  carries `Mcp-Method` and `Mcp-Name` headers and `_meta` version fields in the body, and
+  `MCP-Protocol-Version` must match `_meta.io.modelcontextprotocol/protocolVersion`. Change
+  supported versions with `UpdateGateway`.
+
+Note that `list_tools_sync` **paginates** — loop on `pagination_token` or you will silently see
+only the first page of a large tool inventory:
+
+```python
+tools, token, more = [], None, True
+while more:
+    page = client.list_tools_sync(pagination_token=token)
+    tools.extend(page)
+    token = page.pagination_token
+    more = token is not None
+```
+
+---
+
+## Rate Limits
+
+Control how much traffic individual callers, targets, or tools consume. Define *dimension keys*
+that group traffic into buckets, then *entries* giving each bucket a rate.
+
+Use them to protect backends from spikes, enforce per-caller quotas from JWT claims or IAM
+identity, **block a specific caller by setting a rate of zero**, cap tokens-per-minute on
+inference targets, or limit concurrent connections.
+
+| Component | Notes |
+|---|---|
+| `rateLimitId` | 2–64 chars. Appears in throttled responses and metrics — set it yourself so alarms are legible |
+| `dimensionKeys` | 1–10 keys. **Immutable after creation** |
+| `entries` | 1–1,000. Dimension values must match the number of keys |
+| Rate value | 0–10,000,000. **0 blocks all matching traffic** |
+
+| Limit | Value |
+|---|---|
+| Rate limits per gateway | 50 |
+| Entries per rate limit | 1,000 |
+| Dimension keys per rate limit | 10 |
+| Propagation | ≤ 30 seconds |
+
+All rate limits must pass for a request to proceed (**AND** logic), and a customer-defined
+limit cannot exceed the service ceiling — the effective rate is the lower of the two.
+
+Status moves `CREATING` → `ACTIVE`, with `UPDATING` keeping the previous configuration enforced
+until the update lands, and `DELETING` stopping enforcement on completion.
+
+> **Rate limits fail OPEN by default.** If the rate-limit service is unavailable or a dimension
+> cannot be resolved, the request proceeds. They are a capacity and cost control, **not a
+> security boundary** — never use a rate limit as the only thing stopping a caller. Set rate 0
+> to block if you must, but put the real control in Cedar or IAM.
+
+`ConflictException` on create usually means a rate limit with the same dimension keys already
+exists — since keys are immutable, you delete and recreate rather than adjust.
 
 ---
 
