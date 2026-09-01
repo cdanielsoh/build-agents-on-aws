@@ -377,12 +377,15 @@ The lifespan context manager is still useful for startup initialization (builder
 
 AgentCore Runtime includes an ADOT (AWS Distro for OpenTelemetry) sidecar that collects traces and metrics automatically.
 
+> Summary only. For unified vs split telemetry, the span model, GenAI semantic conventions,
+> custom spans, and the silent failure modes, see **[observability.md](observability.md)**.
+
 ### Setup
 
-1. Add dependencies to `requirements.txt`:
+1. Add dependencies:
    ```
    strands-agents[otel]
-   aws-opentelemetry-distro
+   aws-opentelemetry-distro>=0.18   # <0.18 silently falls back to split telemetry
    ```
 
 2. Use the ADOT wrapper as the CMD in your Dockerfile:
@@ -390,13 +393,15 @@ AgentCore Runtime includes an ADOT (AWS Distro for OpenTelemetry) sidecar that c
    CMD ["opentelemetry-instrument", "python", "app.py"]
    ```
 
-3. **Do NOT set OTEL environment variables** (no `OTEL_EXPORTER_*`, no `OTEL_SERVICE_NAME`). The sidecar configures these automatically for AgentCore-hosted agents.
+3. **Do NOT set OTEL environment variables** (no `OTEL_EXPORTER_*`, no `OTEL_SERVICE_NAME`). The sidecar configures these automatically for AgentCore-hosted agents. Agents hosted *outside* Runtime are the opposite case — there you must set them yourself.
+
+4. **Enable CloudWatch Transaction Search.** An account/region-level setting outside your stack. Required by AgentCore Evaluations in both telemetry delivery modes; without it, evaluations find no sessions and report nothing.
 
 ### What You Get
 
 - **Traces**: Strands Agent tool calls, MCP requests, Bedrock model invocations
-- **Metrics**: Latency, error rates, token usage
-- **Logs**: Container stdout appears in `[runtime-logs]` CloudWatch log streams; structured OTEL data appears in `otel-rt-logs` log streams
+- **Metrics**: Latency, error rates, token usage, session count, duration
+- **Logs**: Container stdout appears in `[runtime-logs]` CloudWatch log streams. Where structured OTEL data lands depends on delivery mode — the `spans` stream in unified mode, `otel-rt-logs` in split mode.
 
 ### Log Streams in CloudWatch
 

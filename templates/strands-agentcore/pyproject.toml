@@ -11,7 +11,10 @@ dependencies = [
     "strands-agents[otel]~=1.54",
     "strands-agents-tools~=0.8.7",
     "bedrock-agentcore~=1.22",
-    "aws-opentelemetry-distro>=0.12",
+    # >=0.18 is required for unified telemetry (spans keep their content and land in
+    # the agent's own log group). Earlier versions fall back to split telemetry and
+    # send spans to the shared aws/spans group. See references/observability.md.
+    "aws-opentelemetry-distro>=0.18",
     "boto3>=1.40",
     "mcp>=1.9,<2.0",
 ]

@@ -29,11 +29,27 @@ description: >
   code-based evaluator, LLM-as-a-judge for agents, evaluating a deployed
   agent from traces, agent quality monitoring, DeepEval or AutoEval on
   AgentCore, simulated scenarios, actor profile, or convert_strands_to_adot.
+  Trigger on observability topics: AgentCore Observability, ADOT,
+  aws-opentelemetry-distro, opentelemetry-instrument, unified vs split
+  telemetry, UNIFIED_TRACES_DESTINATION_ENABLED, CloudWatch Transaction
+  Search, aws/spans, otel-rt-logs, runtime-logs, gen_ai semantic conventions,
+  invoke agent / inference / execute tool spans, custom spans for agents,
+  or missing agent logs and traces.
 ---
 
 # Building Agents on AWS Bedrock AgentCore
 
-> **Validated against `bedrock-agentcore` v1.4.6, `aws-cdk-lib` v2.243.0** (April 2026). If your version differs significantly, verify that the APIs and CDK constructs still apply.
+> **Validated against `bedrock-agentcore` 1.22.0 and `aws-cdk-lib` 2.267.0** (September 2026).
+> Grant types, tool shapes, and evaluator IDs were checked against the live
+> `bedrock-agentcore-control` API model and the AWS devguide. If your version differs, verify
+> before trusting these APIs.
+>
+> **`bedrock-agentcore-starter-toolkit` is deprecated.** The declarative path is now the
+> `agentcore` CLI (`npm install -g @aws/agentcore`) plus an `agentcore.json` deployed via
+> `agentcore deploy`, which is also where Policy engines are configured. The CDK stacks in
+> `references/cdk-infrastructure.md` remain valid and are the right choice when AgentCore
+> resources must live alongside existing CDK infrastructure; the `bedrock-agentcore` SDK
+> itself is unaffected and remains the runtime library.
 
 This skill covers the full architecture for deploying AI agents on Bedrock AgentCore — from the agent container through MCP Gateway to Lambda-based tool servers, with OAuth authentication, security patterns, and CDK infrastructure.
 
@@ -87,6 +103,11 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Run a batch regression audit over past sessions     | `references/evaluations.md`           |
 | Build a dataset of predefined or simulated scenarios | `references/evaluations.md`          |
 | Write a custom or code-based evaluator              | `references/evaluations.md`           |
+| Set up ADOT tracing, spans, and CloudWatch          | `references/observability.md`         |
+| Choose between unified and split telemetry          | `references/observability.md`         |
+| Debug missing logs, traces, or evaluation sessions  | `references/observability.md`         |
+| Add custom spans and attributes                     | `references/observability.md`         |
+| Instrument an agent hosted outside AgentCore        | `references/observability.md`         |
 | Write CDK stacks for Runtime, Gateway, Backend      | `references/cdk-infrastructure.md`   |
 | Understand AgentCore streaming event format          | `references/streaming-backend.md`    |
 | Implement the interrupt resume protocol              | `references/streaming-backend.md`    |
@@ -215,12 +236,28 @@ Three strategy types: User Preferences (cross-session), Semantic Memory (extract
 
 ### 10. Observability (ADOT)
 
-AgentCore Runtime includes an ADOT sidecar for traces and metrics. Setup:
-1. Add `strands-agents[otel]` and `aws-opentelemetry-distro` to requirements
-2. Use `CMD ["opentelemetry-instrument", "python", "app.py"]` in Dockerfile
-3. **Do NOT set OTEL env vars** — the sidecar configures these for hosted agents
+AgentCore Runtime includes an ADOT sidecar. Setup is four steps, and the fourth is the one
+people miss:
 
-Critical IAM: `logs:DescribeLogGroups` on `log-group:*` is required or no `[runtime-logs]` streams are created.
+1. Add `strands-agents[otel]` and `aws-opentelemetry-distro>=0.18` to requirements
+2. Use `CMD ["opentelemetry-instrument", "python", "app.py"]` in the Dockerfile
+3. **Do NOT set `OTEL_*` env vars** — the sidecar configures them for hosted agents.
+   (This inverts for agents hosted outside Runtime, where you must set them yourself.)
+4. **Enable CloudWatch Transaction Search** — an account/region setting outside your stack,
+   required by AgentCore Evaluations in both delivery modes
+
+**Unified vs split telemetry** decides where conversation content lives. Unified keeps it on
+the span in the agent's own log group; split moves it into separate event records in
+`otel-rt-logs` while spans go to the shared `aws/spans`. Agents created on or after
+2026-07-20 default to unified; toggle with `UNIFIED_TRACES_DESTINATION_ENABLED`. **ADOT older
+than 0.18.0 silently falls back to split** regardless of that variable.
+
+Two failure modes are silent and cost real time: `logs:DescribeLogGroups` scoped to anything
+narrower than `log-group:*` means **no `[runtime-logs]` streams are created at all**, and
+missing Transaction Search means **Evaluations finds no sessions**. Neither raises an error.
+
+Session grouping runs on `gen_ai.conversation.id` and `session.id` — the same attributes the
+eval suite injects via `trace_attributes`. See `references/observability.md`.
 
 ### 11. CDK Infrastructure
 
@@ -246,4 +283,5 @@ For a new agent project, work through the references in this order:
 6. **`references/policy.md`** — Add Cedar authorization on tool calls (start in LOG_ONLY)
 7. **`references/agentcore-memory.md`** — Configure persistent conversation memory
 8. **`references/streaming-backend.md`** — Understand the streaming event format and interrupt protocol
-9. **`references/evaluations.md`** — Score the deployed agent from its traces, in batch then online
+9. **`references/observability.md`** — Turn on tracing properly; it gates everything below
+10. **`references/evaluations.md`** — Score the deployed agent from its traces, in batch then online
