@@ -14,7 +14,8 @@ models (Sonnet, Opus). Evaluate harshly before production use.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from strands import tool
 

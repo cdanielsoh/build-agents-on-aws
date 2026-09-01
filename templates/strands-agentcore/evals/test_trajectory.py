@@ -26,7 +26,14 @@ from strands_evals.extractors import tools_use_extractor  # noqa: E402
 from strands_evals.mappers import StrandsInMemorySessionMapper  # noqa: E402
 from strands_evals.types import TaskOutput  # noqa: E402
 
-from conftest import EvalBuilder, load_chats, load_rubrics, save_reports  # noqa: E402
+from conftest import (  # noqa: E402
+    EvalBuilder,
+    assert_all_evaluators_scored,
+    load_chats,
+    load_rubrics,
+    save_report,
+    strict_task,
+)
 
 TRAJECTORY_RUBRIC = (
     "Evaluate whether the agent used the correct tools in the correct sequence. "
@@ -86,7 +93,7 @@ def test_trajectory(config, memory_exporter):
         for r in load_rubrics("output")
     ]
     exp1 = Experiment(cases=cases, evaluators=traj_evaluators)
-    reports1 = exp1.run_evaluations(task_fn_trajectory)
+    report1 = exp1.run_evaluations(strict_task(task_fn_trajectory))
 
     # Experiment 2: Trace-level evaluators (OTEL session trajectory)
     def task_fn_traces(case):
@@ -101,15 +108,19 @@ def test_trajectory(config, memory_exporter):
         ToolParameterAccuracyEvaluator(),
     ]
     exp2 = Experiment(cases=cases, evaluators=trace_evaluators)
-    reports2 = exp2.run_evaluations(task_fn_traces)
+    report2 = exp2.run_evaluations(strict_task(task_fn_traces))
 
-    for report in reports1 + reports2:
-        report.display()
-        print()
+    for label, report in (("trajectory", report1), ("traces", report2)):
+        print(f"\n=== {label} ===")
+        report.display(include_actual_trajectory=True)
+        save_report(f"trajectory_{label}", report)
 
-    save_reports("trajectory", traj_evaluators + trace_evaluators, reports1 + reports2)
+    grouped = assert_all_evaluators_scored(report1)
+    assert_all_evaluators_scored(report2)
 
-    avg = sum(reports1[0].scores) / len(reports1[0].scores)
+    traj_scores = [s for name, ss in grouped.items() if "Trajectory" in name for s in ss]
+    assert traj_scores, "TrajectoryEvaluator produced no scores"
+    avg = sum(traj_scores) / len(traj_scores)
     assert avg > 0, f"Average trajectory score {avg:.2f} is too low"
 
 

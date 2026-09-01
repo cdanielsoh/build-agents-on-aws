@@ -18,7 +18,14 @@ from strands_evals.evaluators import (  # noqa: E402
 )
 from strands_evals.mappers import StrandsInMemorySessionMapper  # noqa: E402
 
-from conftest import EvalBuilder, load_chats, load_rubrics, save_reports  # noqa: E402
+from conftest import (  # noqa: E402
+    EvalBuilder,
+    assert_all_evaluators_scored,
+    load_chats,
+    load_rubrics,
+    save_report,
+    strict_task,
+)
 
 
 def test_traces(config, memory_exporter):
@@ -59,15 +66,13 @@ def test_traces(config, memory_exporter):
     ]
 
     experiment = Experiment(cases=cases, evaluators=evaluators)
-    reports = experiment.run_evaluations(task_fn)
+    report = experiment.run_evaluations(strict_task(task_fn))
 
-    for report in reports:
-        report.display()
-        print()
+    report.display(include_actual_trajectory=True)
+    print()
+    save_report("traces", report)
 
-    save_reports("traces", evaluators, reports)
-
-    assert reports[0].scores, "Evaluator returned no scores"
+    assert_all_evaluators_scored(report)
 
 
 if __name__ == "__main__":

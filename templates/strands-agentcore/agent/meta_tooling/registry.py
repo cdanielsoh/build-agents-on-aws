@@ -6,7 +6,7 @@ that gets injected into the agent's system prompt (Level 1 disclosure).
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from meta_tooling.category import ToolCategory
 
