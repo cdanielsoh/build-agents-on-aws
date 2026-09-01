@@ -19,7 +19,8 @@ description: >
   A2A protocol, strands-evals, strands_evals, OutputEvaluator,
   TrajectoryEvaluator, ActorSimulator, ExperimentGenerator, EvalBuilder,
   prompt cache, cache TTL, context window management, context pressure,
-  conversation manager, CacheSafeConversationManager, deferred tool loading,
+  conversation manager, ContextOffloader, proactive compression,
+  interventions, InterventionHandler, ModelRouter, deferred tool loading,
   tool anti-patterns, agent.state, meta-tooling, meta-tool pattern,
   MetaToolingBuilder, ToolCategory, CategoryRegistry, schema-level
   progressive disclosure, get_tool_info / use_tool pattern,
@@ -34,7 +35,12 @@ description: >
 
 # Designing AI Agents with Strands Agents SDK
 
-> **Validated against `strands-agents` v1.34.1** (April 2026). If your version differs significantly, verify that the APIs and patterns still apply.
+> **Validated against `strands-agents` 1.54.0 and `strands-agents-evals` 1.2.0** (September 2026).
+> The Strands minor line moves fast and has shipped breaking changes. If your version
+> differs, verify before trusting these APIs. Known breaks since 1.34: the `bash` tool was
+> renamed `shell` (1.51), Bedrock auto-mode now caches the system prompt by default (1.53),
+> the default Bedrock model moved to Sonnet 4.5 (1.38), and `Experiment.run_evaluations()`
+> returns one report instead of a list (evals 1.2).
 
 This skill covers how to **design** well-architected agents — prompt architecture for cache efficiency, tool APIs that control context window bloat, topology selection (single vs. multi-agent), and evaluation with the Strands Evals SDK.
 
@@ -48,7 +54,7 @@ tested template verbatim.
 
 ```
 Prompt Architecture → Tool Design → Security → Context Management → Agent Topology → Testing
-(cache-efficient      (progressive   (prompt     (three-tier          (single/graph/   (output/trajectory/
+(cache-efficient      (progressive   (prompt     (native offload +    (single/graph/   (output/trajectory/
  prompt stack)         disclosure)    injection)   compaction)          swarm/workflow)   traces/simulation)
 ```
 
@@ -68,14 +74,17 @@ Each pillar has a dedicated reference file with patterns, code examples, and rat
 | Return instructions from tools (tool-as-dynamic-prompt) | `references/tool-design.md`        |
 | Avoid tool anti-patterns (god tools, missing guards)    | `references/tool-design.md`         |
 | Add human-in-the-loop confirmation gates                | `references/tool-design.md`         |
+| Use InterventionHandler (Confirm/Deny/Guide/Transform)  | `references/tool-design.md`         |
 | Add Bedrock Guardrails (content filtering, PII redaction) | `references/security-patterns.md` |
 | Set up shadow mode guardrails for policy tuning        | `references/security-patterns.md`    |
 | Write safety-focused system prompt instructions        | `references/security-patterns.md`    |
 | Propagate user identity from JWT to tools via context  | `references/security-patterns.md`    |
 | Protect tools from prompt injection (ID hiding)        | `references/security-patterns.md`    |
 | Map real IDs to sequential indices (EntityIndexMapper)  | `references/security-patterns.md`    |
-| Manage context window pressure (tool result clearing)  | `references/context-management.md`  |
-| Clear stale tool results when cache expires            | `references/context-management.md`  |
+| Manage context window pressure (tool result offloading) | `references/context-management.md` |
+| Configure ContextOffloader + storage backend           | `references/context-management.md`  |
+| Turn on proactive compression before overflow          | `references/context-management.md`  |
+| Migrate off a hand-rolled conversation manager         | `references/context-management.md`  |
 | Use agent.state for durable metadata across compaction | `references/context-management.md`  |
 | Understand Bedrock's 5-min cache TTL                   | `references/prompt-architecture.md` |
 | Formalize system prompt boundary model                 | `references/prompt-architecture.md` |
@@ -93,6 +102,7 @@ Each pillar has a dedicated reference file with patterns, code examples, and rat
 | Run OTEL-based trace evaluators                         | `references/testing-with-evals.md`  |
 | Simulate multi-turn conversations (ActorSimulator)      | `references/testing-with-evals.md`  |
 | Auto-generate test cases from scenarios                 | `references/testing-with-evals.md`  |
+| Debug an eval suite that passes with all-zero scores    | `references/testing-with-evals.md`  |
 
 ## Key Patterns (Summary)
 
@@ -119,13 +129,25 @@ Instead of embedding variable data in the system prompt (which busts the cache),
 
 ### 4. Context Window Pressure Management
 
-Three-tier compaction adapted from Claude Code for Bedrock's cache constraints:
+**Use the native features. Do not hand-roll a conversation manager** — earlier versions of
+this skill did, and Strands has since absorbed all of it:
 
-- **Tier 1 (time-based)**: If idle gap > cache TTL (5 min), cache is cold — clear old tool results for free
-- **Tier 2 (count-based)**: If tool results > threshold, clear oldest (trades cache break for space)
-- **Tier 3 (message removal)**: If tokens > 80% of context window, remove oldest messages
+| Concern | Native feature |
+|---|---|
+| Oversized tool results | `ContextOffloader` plugin — stores them, leaves a retrievable preview |
+| Token counting | `model.count_tokens()` |
+| Context ceiling | `context_window_limit` on the model config |
+| Compress before overflow | `proactive_compression={"compression_threshold": 0.7}` |
+| Summarize instead of drop | `SummarizingConversationManager(pin_first=1)` |
 
-Uses `agent.state` for durable metadata (timestamps, entity mappings) that survives clearing. See `templates/strands-agentcore/agent/core/conversation.py` for the `CacheSafeConversationManager`.
+The one thing the SDK does *not* model is Bedrock's ~5-minute prompt-cache TTL. When the
+idle gap exceeds it the prefix is recomputed anyway, so shrinking the payload in that
+window is free — worth a `should_offload` callback that tightens the threshold on a cold
+cache. That is the only custom piece the template keeps.
+
+`agent.state` survives compaction, summarization, and offloading, so it remains the right
+home for durable metadata (entity mappings, session facts). See
+`references/context-management.md` and `templates/strands-agentcore/agent/core/conversation.py`.
 
 ### 5. Progressive Disclosure (Two-Layer Tools)
 
@@ -144,9 +166,15 @@ Tools use `@tool(context=True)` with `ToolContext` to access `agent.state` (dura
 - **Duplicating agent reasoning**: let the model think, tools execute
 - **user_id in tool parameters**: use app context or token propagation — exposed parameters are a prompt injection surface
 
-### 8. Human-in-the-Loop (Interrupt Gates)
+### 8. Human-in-the-Loop (Interventions)
 
-Gate irreversible or high-impact tools (deletes, payments, external sends) with a confirmation interrupt. Implement via Strands `HookProvider` + `event.interrupt()` — the hook checks the tool name, pauses the agent, and cancels if the user declines. Read-only tools should never require confirmation. See `references/tool-design.md`.
+Gate irreversible or high-impact tools (deletes, payments, external sends) with a
+confirmation gate. Read-only tools should never require confirmation.
+
+As of Strands 1.51+ use `Agent(interventions=[...])` with an `InterventionHandler`, which
+supersedes the older "`HookProvider` that calls `event.interrupt()`" pattern. Interventions
+also support an LLM-driven risk classifier, so you can gate on *assessed risk* rather than
+maintaining a hard-coded list of tool names. See `references/tool-design.md`.
 
 ### 9. Security (Defense in Depth)
 
@@ -191,7 +219,21 @@ Four evaluation types, each catching different failure modes:
 | Traces     | OTEL span quality   | Helpfulness, Faithfulness, GoalSuccess, ToolSelection, ToolParameter |
 | Simulation | Multi-turn behavior | ActorSimulator + trace evals |
 
-**Package**: `strands-agents-evals` (NOT `strands-evals`). The `EvalBuilder` pattern extends SessionBuilder to inject OTEL trace attributes without affecting production code.
+**Package**: `strands-agents-evals` (imported as `strands_evals`). The `EvalBuilder` pattern
+extends SessionBuilder to inject OTEL trace attributes without affecting production code.
+
+Three traps that make an eval suite silently worthless — all three cost real debugging time
+and are guarded against in the template:
+
+1. **`run_evaluations()` returns ONE report**, not a list per evaluator (evals 1.2 change).
+   Its `scores` list is flat across all evaluators, so assert per evaluator or a regression
+   in one hides behind a win in another.
+2. **`Experiment` swallows task exceptions into 0.0 scores.** A renamed SDK field or a bad
+   fixture then looks like a poorly-performing agent — the suite "passes" in milliseconds
+   with everything zeroed. Wrap the task so it re-raises.
+3. **`ToolSelectionAccuracy` / `ToolParameterAccuracy` score 0.0 on cases that correctly
+   make no tool call.** Mixing those cases into the same Experiment depresses the mean
+   without any regression having occurred.
 
 ### 12. Meta-Tooling (Experimental — Schema-Level Progressive Disclosure)
 

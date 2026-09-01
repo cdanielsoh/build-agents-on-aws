@@ -45,7 +45,7 @@ from strands import Agent
 from strands.models.bedrock import BedrockModel, CacheConfig
 
 model = BedrockModel(
-    model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    model_id="global.anthropic.claude-sonnet-5",
     cache_config=CacheConfig(strategy="auto"),
 )
 
@@ -187,20 +187,26 @@ Turn 8 (30 sec gap):  Cache hit — new prefix cached at turn 7.    ~500 input t
 
 When the cache is cold, the full prefix will be recomputed regardless. This is the optimal time to clear stale tool results — the clearing is free because there's no cache to break.
 
-The `CacheSafeConversationManager` (see [context-management.md](context-management.md)) detects cache expiry and clears old tool results before the API call, shrinking the recomputation payload:
+A cache-aware `should_offload` callback on `ContextOffloader` (see
+[context-management.md](context-management.md)) tightens the offload threshold once the gap
+since the last call exceeds the TTL, shrinking the recomputation payload:
 
 ```
-Turn 7 without clearing:  Full reprocess of 90K tokens (30 old tool results).
-Turn 7 with clearing:     Full reprocess of 40K tokens (5 recent tool results).
+Turn 7 without offloading:  Full reprocess of 90K tokens (30 old tool results).
+Turn 7 with offloading:     Full reprocess of 40K tokens (5 recent + 25 previews).
 ```
 
-Same cache miss, 55% fewer tokens to reprocess.
+Same cache miss, 55% fewer tokens to reprocess — and unlike outright clearing, the offloaded
+content stays retrievable.
 
 ### Practical Guidance
 
-- **High-engagement sessions** (turns every 30s): Cache stays warm. Tiers 1 rarely fires. Rely on Tier 2 (count-based) for pressure management.
-- **Idle sessions** (5+ minute gaps): Cache expires between turns. Tier 1 fires regularly, keeping payloads lean.
-- **Batch/API agents** (single invocation): No multi-turn caching benefit. Focus on Tier 1 system prompt stability and tool result size.
+- **High-engagement sessions** (turns every 30s): cache stays warm, so the cold-cache branch
+  rarely fires. Rely on the ordinary `max_result_tokens` threshold for pressure management.
+- **Idle sessions** (5+ minute gaps): the cache expires between turns, so the cold branch
+  fires regularly and keeps payloads lean at no cost.
+- **Batch/API agents** (single invocation): no multi-turn caching benefit at all. Focus on
+  system prompt stability and tool result size instead.
 
 ---
 

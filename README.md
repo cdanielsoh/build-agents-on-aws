@@ -61,7 +61,7 @@ Each pillar has a dedicated reference with patterns, code examples, and rational
 | `prompt-architecture` | Cache-efficient prompt stacks, file-based prompts, dynamic context via tool results |
 | `tool-design` | Progressive disclosure, closure factory, tool-as-dynamic-prompt, anti-patterns, HITL gates |
 | `security-patterns` | Bedrock Guardrails, prompt injection defense, JWT propagation, entity index mapping |
-| `context-management` | Three-tier compaction, agent.state for durable metadata, cache-safe clearing |
+| `context-management` | Native ContextOffloader + proactive compression, cache-economics offload policy, agent.state for durable metadata |
 | `agent-topology` | Single agent, deferred loading, Agent-as-Tool, Graph, Swarm, Workflow, A2A |
 | `meta-tooling` | Schema-level progressive disclosure, category registry, transparent local/MCP routing |
 | `testing-with-evals` | Output/trajectory/trace/simulation evals with Strands Evals SDK |
