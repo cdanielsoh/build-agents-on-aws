@@ -146,6 +146,16 @@ class AgentRuntimeStack(Stack):
         ))
 
         # CloudWatch Logs
+        #
+        # logs:DescribeLogGroups MUST be on log-group:* — not a narrower ARN. Scope it
+        # down and no [runtime-logs] streams are created at all: the agent runs fine and
+        # produces no logs, with nothing anywhere indicating why. This is the single
+        # most expensive silent failure in an AgentCore deployment.
+        # See references/observability.md.
+        runtime_role.add_to_policy(iam.PolicyStatement(
+            actions=["logs:DescribeLogGroups"],
+            resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:*"],
+        ))
         runtime_role.add_to_policy(iam.PolicyStatement(
             actions=["logs:CreateLogGroup", "logs:DescribeLogStreams"],
             resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/bedrock*"],
@@ -153,6 +163,19 @@ class AgentRuntimeStack(Stack):
         runtime_role.add_to_policy(iam.PolicyStatement(
             actions=["logs:CreateLogStream", "logs:PutLogEvents"],
             resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/bedrock*:log-stream:*"],
+        ))
+
+        # X-Ray + metrics, for traces and the observability dashboard.
+        runtime_role.add_to_policy(iam.PolicyStatement(
+            actions=[
+                "xray:PutTraceSegments", "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules", "xray:GetSamplingTargets",
+            ],
+            resources=["*"],
+        ))
+        runtime_role.add_to_policy(iam.PolicyStatement(
+            actions=["cloudwatch:PutMetricData"],
+            resources=["*"],
         ))
 
         # ========== AgentCore Memory ==========

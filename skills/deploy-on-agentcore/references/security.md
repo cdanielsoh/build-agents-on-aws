@@ -5,6 +5,7 @@
 2. [Token Propagation Chain](#token-propagation-chain)
 3. [Request Interceptor: The Only Bridge](#request-interceptor-the-only-bridge)
 4. [Enforce the Model Path in IAM](#enforce-the-model-path-in-iam-not-just-config)
+5. [Testing Security Controls](#testing-security-controls)
 
 > Row-level security, the interceptor pattern, and the IAM model-path control here are
 > distilled from a deployed, mutation-tested governance reference: inverting `SET LOCAL`,
@@ -314,3 +315,61 @@ Routing through a proxy that the role could bypass is a convention. Routing thro
 the role *cannot* bypass is a control. The same reasoning applies to any egress you intend to
 be mandatory: if IAM still permits the direct path, a prompt injection or a code change can
 take it.
+
+---
+
+## Testing Security Controls
+
+A security control that is never tested against its own inversion is a comment. For each
+control, write the test that fails when the control is removed — then verify it actually fails
+by removing it temporarily.
+
+The five that matter for this architecture:
+
+| Control | The test that catches its removal |
+|---|---|
+| `SET LOCAL` (not `SET`) | Two callers over the **same pooled connection** see only their own rows |
+| Scope cleared after use | After the context manager exits, an unscoped query returns 0 rows |
+| Scope cleared on error | Same, but the transaction rolled back |
+| JWT signature verification | A token with a valid payload and a bad signature is rejected |
+| Interceptor strip-before-inject | A `tools/call` carrying its own `_scope` gets it discarded |
+| Tool reads scope from `_scope` only | A tool given scope in its *arguments* does not honour it |
+
+### The pooled-connection leak test
+
+This is the likeliest real bug in the whole design, and it only reproduces under connection
+reuse — which is the normal Lambda warm-start condition, not an edge case:
+
+```python
+class TestPoolingLeak:
+    """Scope surviving across pooled connections."""
+
+    def test_scope_does_not_leak_between_invocations(self, source):
+        """Both calls reuse the SAME underlying connection, which is exactly the
+        Lambda warm-start condition. With plain SET, the second caller inherits the
+        first's scope and reads another team's rows."""
+        emea = persona("sofia").scope()
+        amer = persona("ravi").scope()
+
+        assert _teams_seen(source, emea, "crm.deals") == {"sales-emea"}
+        assert _teams_seen(source, amer, "crm.deals") == {"sales-amer"}
+        # And back again, to rule out order-dependence.
+        assert _teams_seen(source, emea, "crm.deals") == {"sales-emea"}
+
+    def test_scope_is_cleared_after_transaction(self, source, app_conn):
+        with scoped_connection(persona("ravi").scope(), source):
+            pass
+        with app_conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM crm.deals")
+            assert int(cur.fetchone()[0]) == 0, "scope leaked past the transaction"
+```
+
+Use a single-connection source in the fixture so reuse is guaranteed rather than incidental. A
+pool large enough to hand out a fresh connection each time will pass even when the bug is
+present.
+
+### Test the ALLOW-plus-zero-rows case explicitly
+
+Assert that a caller Cedar *permits* still gets zero rows when none are theirs. A suite that
+only ever asserts `DENY` proves one layer twice and tells you nothing about whether the second
+layer exists. See [policy.md](policy.md#where-policy-fits).
