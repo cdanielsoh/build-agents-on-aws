@@ -23,6 +23,12 @@ description: >
   AgentCore::Gateway, tool-level authorization, fine-grained access control
   for tools, LOG_ONLY vs ENFORCE, enforcementMode, policy generation,
   LogOnlyDecisionFlips, or guardrails in policy.
+  Trigger on evaluation topics: AgentCore Evaluations, built-in evaluators,
+  Builtin.Helpfulness, Builtin.GoalSuccessRate, trajectory match evaluators,
+  online / on-demand / batch / dataset evaluation, custom evaluator,
+  code-based evaluator, LLM-as-a-judge for agents, evaluating a deployed
+  agent from traces, agent quality monitoring, DeepEval or AutoEval on
+  AgentCore, simulated scenarios, actor profile, or convert_strands_to_adot.
 ---
 
 # Building Agents on AWS Bedrock AgentCore
@@ -76,6 +82,11 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Constrain tool arguments (refund ceilings, scoping) | `references/policy.md`               |
 | Shadow-test an authorization rule on real traffic   | `references/policy.md`               |
 | Generate Cedar policies from natural language       | `references/policy.md`               |
+| Score a deployed agent from its traces              | `references/evaluations.md`           |
+| Monitor production agent quality continuously       | `references/evaluations.md`           |
+| Run a batch regression audit over past sessions     | `references/evaluations.md`           |
+| Build a dataset of predefined or simulated scenarios | `references/evaluations.md`          |
+| Write a custom or code-based evaluator              | `references/evaluations.md`           |
 | Write CDK stacks for Runtime, Gateway, Backend      | `references/cdk-infrastructure.md`   |
 | Understand AgentCore streaming event format          | `references/streaming-backend.md`    |
 | Implement the interrupt resume protocol              | `references/streaming-backend.md`    |
@@ -173,11 +184,36 @@ Two Cedar limits shape your design up front: **no string concatenation** (so you
 wildcards** (so adding a tool to a target is also a policy change; under default-deny the new
 tool is denied until listed). See `references/policy.md`.
 
-### 8. AgentCore Memory
+### 8. Evaluations — Managed Scoring from Traces
+
+Managed LLM-as-judge scoring over OTEL traces. Works for agents on AgentCore Runtime **and
+anywhere else** — the input is telemetry, not a runtime dependency. **This is distinct from
+`strands-evals`**, which is the pre-deploy pytest suite; you want both, and
+`bedrock_agentcore.evaluation.convert_strands_to_adot` bridges between them.
+
+Four ways to run it: **online** (sample live traffic continuously), **on-demand** (score
+specific span/trace IDs — the cheapest loop when iterating on an evaluator), **batch** (async
+job over a CloudWatch Logs window; the service discovers sessions itself), and **dataset**
+(replay predefined turns, or let an LLM actor drive simulated ones).
+
+Built-in evaluators come in session, trace, and tool levels — the level decides what the judge
+actually sees, which is the first thing to check when a score looks wrong. Note three
+trajectory variants (`ExactOrderMatch`, `InOrderMatch`, `AnyOrderMatch`): exact-order will fail
+an agent that did the right thing plus one extra lookup, so pick the loosest that still encodes
+the requirement. Prefer a **code-based** custom evaluator whenever the property is decidable —
+an LLM judge for "is this valid JSON" adds cost and variance to a question `json.loads` answers
+exactly.
+
+**ADOT instrumentation is a hard prerequisite** — no traces, no evaluations. Ground truth is
+optional and missing fields **fall back to reference-free scoring rather than erroring**, so a
+mistyped field name yields a plausible-but-different score instead of a failure. See
+`references/evaluations.md`.
+
+### 9. AgentCore Memory
 
 Three strategy types: User Preferences (cross-session), Semantic Memory (extracted facts), Conversation Summaries (per-session). Namespace design with `{actorId}` from Cognito JWT `sub` claim (extracted via base64, no PyJWT needed). **Must use `batch_size=1`** (the default) because containers are hard-killed without SIGTERM — larger batches risk data loss.
 
-### 9. Observability (ADOT)
+### 10. Observability (ADOT)
 
 AgentCore Runtime includes an ADOT sidecar for traces and metrics. Setup:
 1. Add `strands-agents[otel]` and `aws-opentelemetry-distro` to requirements
@@ -186,7 +222,7 @@ AgentCore Runtime includes an ADOT sidecar for traces and metrics. Setup:
 
 Critical IAM: `logs:DescribeLogGroups` on `log-group:*` is required or no `[runtime-logs]` streams are created.
 
-### 10. CDK Infrastructure
+### 11. CDK Infrastructure
 
 Two agent-specific stacks:
 - **MCPGatewayStack**: Gateway + interceptor + Lambda targets + tool schemas
@@ -194,7 +230,7 @@ Two agent-specific stacks:
 
 Plus minimal Cognito User Pool if no OIDC provider exists.
 
-### 11. Streaming Protocol & Interrupts
+### 12. Streaming Protocol & Interrupts
 
 AgentCore streams responses as SSE with nested JSON events (`contentBlockDelta`, `messageStop`, etc.). Key behaviors: `stopReason=end_turn` means normal completion; `stopReason=interrupt` means HITL pause — caller must collect user response and resume with `interrupt_responses` payload. Session IDs must be minimum 33 characters and consistent across the entire conversation including interrupt resumptions.
 
@@ -210,3 +246,4 @@ For a new agent project, work through the references in this order:
 6. **`references/policy.md`** — Add Cedar authorization on tool calls (start in LOG_ONLY)
 7. **`references/agentcore-memory.md`** — Configure persistent conversation memory
 8. **`references/streaming-backend.md`** — Understand the streaming event format and interrupt protocol
+9. **`references/evaluations.md`** — Score the deployed agent from its traces, in batch then online
