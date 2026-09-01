@@ -195,7 +195,7 @@ A single Lambda distinguishes the two by checking whether `gatewayResponse` is p
 
 ### RESPONSE interceptors with streaming
 
-When [response streaming](gateway-mcp-streaming.md) is enabled, the RESPONSE interceptor
+When response streaming is enabled on the gateway, the RESPONSE interceptor
 behaviour changes materially — it is invoked **once per eligible event** rather than once with
 a complete response. Check `gatewayResponse.isStreamingResponse` and handle both modes.
 

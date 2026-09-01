@@ -14,7 +14,7 @@ claude plugin install build-agents-on-aws@build-agents-on-aws
 | Skill | What it covers |
 |-------|---------------|
 | **strands-agent-design** | Design well-architected agents with Strands Agents SDK — prompt architecture for cache efficiency, tool API design, security patterns, context window management, agent topology selection, meta-tooling, and evaluation with Strands Evals SDK. |
-| **deploy-on-agentcore** | Deploy agents on Bedrock AgentCore — runtime containers, MCP Gateway with Lambda-based tool servers, Identity (2LO/3LO outbound auth), Cedar Policy authorization, managed Evaluations, Observability, AgentCore Memory, streaming protocol, and CDK infrastructure. |
+| **deploy-on-agentcore** | Deploy agents on Bedrock AgentCore — runtime containers, MCP Gateway (tool/HTTP/inference targets, REQUEST+RESPONSE interceptors, rate limits), Identity (2LO/3LO outbound auth), Cedar Policy authorization, Agent Registry, managed Evaluations, Observability, AgentCore Memory, streaming protocol, and CDK infrastructure. |
 
 Skills activate automatically when relevant context is detected — mention Strands SDK, agent design, AgentCore, MCP Gateway, CDK, or related topics.
 
@@ -123,9 +123,10 @@ Data Store(s)                      ── DynamoDB, RDS, or existing APIs
 | Reference | Covers |
 |-----------|--------|
 | `runtime-and-sessions` | VM-per-session model, BedrockAgentCoreApp, SessionBuilder, singleton pattern |
-| `gateway-and-mcp` | MCP Gateway, interceptor Lambda, Lambda MCP servers, direct vs adapter patterns |
+| `gateway-and-mcp` | MCP Gateway, **REQUEST + RESPONSE interceptors**, inference targets, native tool search, rate limits, Lambda MCP servers |
 | `security` | Multi-layer authorization, JWT token propagation, DynamoDB LeadingKeys, PostgreSQL RLS |
 | `identity` | **2LO vs 3LO outbound auth**, credential providers, token vault, per-user downstream tokens |
+| `agent-registry` | **Publish & discover** agents/MCP/skills, record lifecycle, discovery boundaries |
 | `policy` | **Cedar authorization on tool calls**, the two LOG_ONLY controls, policy generation |
 | `evaluations` | **Managed LLM-as-judge over traces** — online, on-demand, batch, dataset |
 | `observability` | **ADOT, unified vs split telemetry**, gen_ai semconv, silent failure modes |
@@ -142,9 +143,10 @@ Data Store(s)                      ── DynamoDB, RDS, or existing APIs
 5. **identity** — Wire outbound auth (2LO/3LO) to downstream APIs
 6. **policy** — Add Cedar authorization on tool calls, starting in LOG_ONLY
 7. **agentcore-memory** — Configure persistent conversation memory
-8. **streaming-backend** — Understand the streaming event format and interrupt protocol
-9. **observability** — Turn on tracing properly; it gates evaluation
-10. **evaluations** — Score the deployed agent from its traces
+8. **agent-registry** — Publish agents/tools/skills and set discovery boundaries
+9. **streaming-backend** — Understand the streaming event format and interrupt protocol
+10. **observability** — Turn on tracing properly; it gates evaluation
+11. **evaluations** — Score the deployed agent from its traces
 
 ## Contributing
 
