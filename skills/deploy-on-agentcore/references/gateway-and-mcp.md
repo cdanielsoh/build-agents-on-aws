@@ -2,7 +2,8 @@
 
 ## Table of Contents
 1. [MCP Gateway Architecture](#mcp-gateway-architecture)
-2. [Interceptor Lambda](#interceptor-lambda)
+2. [Target Types: Not Just Tools](#target-types-not-just-tools)
+3. [Interceptor Lambda](#interceptor-lambda)
 3. [Lambda MCP Server Handler](#lambda-mcp-server-handler)
 4. [Direct vs Adapter Pattern](#direct-vs-adapter-pattern)
 5. [MCP Client in the Agent](#mcp-client-in-the-agent)
@@ -47,6 +48,56 @@ Gateway is the recommended pattern for most use cases. Direct connections make s
 Gateway exposes tools with the format: `{target-name}___{tool-name}`
 
 For example, if target is `user-data-mcp-target` and tool is `get_profile`, the Gateway exposes it as `user-data-mcp-target___get_profile`. The agent sees and calls this full name; the Gateway strips the prefix before invoking the Lambda.
+
+**The target name is load-bearing beyond cosmetics.** Cedar actions are named with this same
+prefix (`AgentCore::Action::"user-data-mcp-target___get_profile"`), so renaming a target makes
+every policy that names it dead — and under Cedar's default-deny the tool is then silently
+blocked with no error anywhere. Group tools into targets along the lines you intend to
+authorize, and assert the target-name/action-prefix agreement in a test. See
+[policy.md](policy.md#cedar-limitations).
+
+---
+
+## Target Types: Not Just Tools
+
+`TargetConfiguration` accepts three kinds of target, and most treatments only mention the
+first:
+
+| Type | Fronts | Sub-types |
+|---|---|---|
+| `mcp` | Tools | `lambda`, `mcpServer`, `openApiSchema`, `smithyModel`, `apiGateway`, `connector` |
+| `http` | A plain HTTP endpoint | — |
+| `inference` | **The model path** | `connector`, `provider` |
+
+### Inference targets
+
+A Gateway can front **model** calls, not only tool calls — `InferenceTargetConfiguration`
+takes either a connector or a provider (`endpoint`, `modelMapping`, `operations`), with
+per-operation `InferenceConfiguration` for `maxTokens`, `temperature`, `topP`, and
+`stopSequences`, and a per-operation model list.
+
+That means one governed endpoint for both halves of the agent's egress: the same
+`CUSTOM_JWT` authorizer, the same Cedar policy engine, and the same guardrails apply to
+inference as to tools. Architecturally this is the cleaner default — before reaching for a
+third-party LLM proxy, check whether an inference target covers what you need.
+
+### When a proxy still earns its place
+
+Inference targets give you multi-provider routing, per-model token limits, and guardrails.
+What they do not give you is **dollar-denominated budgets and chargeback**. If the requirement
+is "each person gets $100 of model spend per month, and finance needs per-team attribution",
+that is still a metering proxy's job (LiteLLM or equivalent), with per-user virtual keys handed
+out through the Identity token vault — see [identity.md](identity.md).
+
+Two things to get right if you go that way:
+
+**Enforce the routing in IAM, not configuration.** Remove `bedrock:InvokeModel` from the
+runtime role. Otherwise the proxy is a convention the agent could bypass rather than a control
+it cannot. See [security.md](security.md#enforce-the-model-path-in-iam-not-just-config).
+
+**Budget per person, not per team.** A shared team pool where each member's key ceiling equals
+the whole pool means one member can exhaust it for everyone. Give each person a ceiling and
+derive the team cap as the sum.
 
 ---
 

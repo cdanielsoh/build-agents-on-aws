@@ -93,6 +93,12 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Configure ADOT observability or IAM permissions     | `references/runtime-and-sessions.md` |
 | Create MCP Gateway with Lambda targets              | `references/gateway-and-mcp.md`      |
 | Write Lambda MCP server handlers                    | `references/gateway-and-mcp.md`      |
+| Front the MODEL path through the Gateway (inference targets) | `references/gateway-and-mcp.md` |
+| Meter per-user model spend and set dollar budgets   | `references/gateway-and-mcp.md`       |
+| Write a REQUEST interceptor (identity -> tool scope) | `references/security.md`             |
+| Set PostgreSQL RLS scope without leaking it         | `references/security.md`             |
+| Test that a security control actually works         | `references/security.md`             |
+| Pin container images so deploys are not silent no-ops | `references/cdk-infrastructure.md` |
 | Implement row-level security / multi-layer auth     | `references/security.md`             |
 | Understand the token propagation chain              | `references/security.md`             |
 | Integrate AgentCore Memory for persistence          | `references/agentcore-memory.md`     |
