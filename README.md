@@ -14,7 +14,7 @@ claude plugin install build-agents-on-aws@build-agents-on-aws
 | Skill | What it covers |
 |-------|---------------|
 | **strands-agent-design** | Design well-architected agents with Strands Agents SDK — prompt architecture for cache efficiency, tool API design, security patterns, context window management, agent topology selection, meta-tooling, and evaluation with Strands Evals SDK. |
-| **deploy-on-agentcore** | Deploy agents on Bedrock AgentCore — runtime containers, MCP Gateway with Lambda-based tool servers, multi-layer authorization with JWT token propagation, AgentCore Memory, streaming protocol, and CDK infrastructure. |
+| **deploy-on-agentcore** | Deploy agents on Bedrock AgentCore — runtime containers, MCP Gateway with Lambda-based tool servers, Identity (2LO/3LO outbound auth), Cedar Policy authorization, managed Evaluations, Observability, AgentCore Memory, streaming protocol, and CDK infrastructure. |
 
 Skills activate automatically when relevant context is detected — mention Strands SDK, agent design, AgentCore, MCP Gateway, CDK, or related topics.
 
@@ -32,10 +32,10 @@ strands-agent-design                    deploy-on-agentcore
 
 Prompt Architecture ──────────────────► AgentCore Runtime
 Tool Design ──────────────────────────► MCP Gateway + Lambda MCP Servers
-Security Patterns ────────────────────► Multi-Layer Auth + Token Propagation
+Security Patterns ────────────────────► Identity (2LO/3LO) + Policy (Cedar)
 Context Management ───────────────────► AgentCore Memory
 Agent Topology ───────────────────────► CDK Infrastructure
-Testing with Evals                      Streaming Protocol
+Testing with Evals ───────────────────► Observability + Evaluations
 ```
 
 Start with **strands-agent-design** when building a new agent from scratch. Move to **deploy-on-agentcore** when you're ready to deploy.
@@ -45,6 +45,7 @@ Start with **strands-agent-design** when building a new agent from scratch. Move
 | Server | Tools | Purpose |
 |--------|-------|---------|
 | `strands-agents` | `search_docs`, `fetch_doc` | Search and fetch Strands Agents SDK documentation |
+| `agentcore` | `search_agentcore_docs`, `get_*_guide`, `policy_*`, `identity_*`, `memory_*`, `gateway_*` | AgentCore docs plus control-plane operations |
 
 ## Strands Agent Design
 
@@ -124,6 +125,10 @@ Data Store(s)                      ── DynamoDB, RDS, or existing APIs
 | `runtime-and-sessions` | VM-per-session model, BedrockAgentCoreApp, SessionBuilder, singleton pattern |
 | `gateway-and-mcp` | MCP Gateway, interceptor Lambda, Lambda MCP servers, direct vs adapter patterns |
 | `security` | Multi-layer authorization, JWT token propagation, DynamoDB LeadingKeys, PostgreSQL RLS |
+| `identity` | **2LO vs 3LO outbound auth**, credential providers, token vault, per-user downstream tokens |
+| `policy` | **Cedar authorization on tool calls**, the two LOG_ONLY controls, policy generation |
+| `evaluations` | **Managed LLM-as-judge over traces** — online, on-demand, batch, dataset |
+| `observability` | **ADOT, unified vs split telemetry**, gen_ai semconv, silent failure modes |
 | `agentcore-memory` | User preferences, semantic memory, conversation summaries, namespace design |
 | `cdk-infrastructure` | Cognito, Runtime stack, Gateway stack, Backend stack, SSM parameters |
 | `streaming-backend` | SSE event format, interrupt protocol, session ID requirements |
@@ -134,9 +139,23 @@ Data Store(s)                      ── DynamoDB, RDS, or existing APIs
 2. **gateway-and-mcp** — Create MCP Gateway and Lambda MCP servers
 3. **runtime-and-sessions** — Build the agent container with singleton session
 4. **security** — Add multi-layer auth and token propagation
-5. **agentcore-memory** — Configure persistent conversation memory
-6. **streaming-backend** — Understand the streaming event format and interrupt protocol
+5. **identity** — Wire outbound auth (2LO/3LO) to downstream APIs
+6. **policy** — Add Cedar authorization on tool calls, starting in LOG_ONLY
+7. **agentcore-memory** — Configure persistent conversation memory
+8. **streaming-backend** — Understand the streaming event format and interrupt protocol
+9. **observability** — Turn on tracing properly; it gates evaluation
+10. **evaluations** — Score the deployed agent from its traces
 
 ## Contributing
 
-Fork the repo, make your changes, and submit a PR. Skills are markdown files — no build steps required.
+Fork the repo, make your changes, and submit a PR.
+
+Skills are markdown — no build step. The template under `templates/` is real code and is
+expected to stay runnable:
+
+```bash
+python3 scripts/scaffold.py /tmp/t && cd /tmp/t
+python -m venv .venv && .venv/bin/pip install -e '.[dev]'
+.venv/bin/ruff check agent evals
+.venv/bin/python -m pytest evals/test_output.py -v -s   # calls a real model; costs money
+```
