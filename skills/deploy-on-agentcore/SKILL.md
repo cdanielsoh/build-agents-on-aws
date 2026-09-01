@@ -35,6 +35,11 @@ description: >
   Search, aws/spans, otel-rt-logs, runtime-logs, gen_ai semantic conventions,
   invoke agent / inference / execute tool spans, custom spans for agents,
   or missing agent logs and traces.
+  Trigger on interceptor topics: gateway interceptor, REQUEST interceptor,
+  RESPONSE interceptor, interceptionPoints, passRequestHeaders, payloadFilter,
+  RESPONSE_BODY exclusion, transformedGatewayRequest,
+  transformedGatewayResponse, isStreamingResponse, interceptor short-circuit,
+  redacting a gateway response, or the interceptor 6 MB payload limit.
 ---
 
 # Building Agents on AWS Bedrock AgentCore
@@ -96,6 +101,9 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Front the MODEL path through the Gateway (inference targets) | `references/gateway-and-mcp.md` |
 | Meter per-user model spend and set dollar budgets   | `references/gateway-and-mcp.md`       |
 | Write a REQUEST interceptor (identity -> tool scope) | `references/security.md`             |
+| Write a RESPONSE interceptor (redaction, filtering) | `references/gateway-and-mcp.md`       |
+| Handle interceptors with response streaming         | `references/gateway-and-mcp.md`       |
+| Work around the interceptor 6 MB payload limit      | `references/gateway-and-mcp.md`       |
 | Set PostgreSQL RLS scope without leaking it         | `references/security.md`             |
 | Test that a security control actually works         | `references/security.md`             |
 | Pin container images so deploys are not silent no-ops | `references/cdk-infrastructure.md` |
@@ -149,7 +157,12 @@ The **mutable headers pattern** is key: the builder creates a headers dict and p
 A single Gateway endpoint replaces N separate MCP server connections:
 - Lambda targets behind Gateway (pay-per-invocation, no idle cost)
 - Tool schemas declared in CDK with typed input schemas
-- **Interceptor Lambda** extracts Authorization header from request and forwards to targets
+- **Interceptors** (REQUEST and/or RESPONSE, at most one of each, Lambda only). The REQUEST
+  interceptor is the only way identity reaches a Lambda target. Two things bite: the payload
+  shape differs by target type (`mcp` = parsed JSON vs `http` = base64, with inference targets
+  using the `http` shape), and after a REQUEST short-circuit the RESPONSE interceptor **still
+  runs on MCP targets but does not on HTTP targets**. Under streaming, the RESPONSE interceptor
+  fires once per event and only the first may change headers or status code
 - OAuth validation at Gateway level via `CUSTOM_JWT` with Cognito OIDC discovery URL
 
 ### 4. Lambda MCP Servers
