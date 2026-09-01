@@ -153,7 +153,7 @@ def _init_agent_state(self, agent, token):
     agent.state.set("user_id", resolve_actor_id(token))
 ```
 
-See `scaffold/agent/tools/example_tool.py` and `scaffold/agent/core/builder.py`.
+See `templates/strands-agentcore/agent/tools/example_tool.py` and `templates/strands-agentcore/agent/core/builder.py`.
 
 ### Closures — Heavy External Dependencies
 

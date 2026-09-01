@@ -1,0 +1,11 @@
+name: impatient-power-user
+initial_message: "my account — what tier?"
+goal: Confirm the account tier and membership date in as few turns as possible.
+traits:
+  - Terse; writes in fragments rather than sentences.
+  - Impatient — pushes back if the agent asks for information it should already have.
+  - Follows up with a second, related question once the first is answered.
+context: >
+  A long-time premium customer checking their tier before renewing. Already signed in,
+  so any request for an account ID is a failure on the agent's part.
+max_turns: 4

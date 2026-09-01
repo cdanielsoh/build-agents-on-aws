@@ -81,7 +81,7 @@ Store cases in `evals/chats/*.json`:
 
 ### Loading Cases
 
-The scaffold's `conftest.py` provides auto-discovery:
+The template's `conftest.py` provides auto-discovery:
 
 ```python
 def load_chats(pattern="*.json") -> list[Case]:
@@ -116,7 +116,7 @@ The `task_fn` receives a `Case` and returns `{"output": str, "trajectory": ...}`
 
 ## EvalBuilder
 
-The scaffold's key testing pattern: subclass `SessionBuilder` to inject `trace_attributes` for OTEL-based evaluators without affecting production code.
+The template's key testing pattern: subclass `SessionBuilder` to inject `trace_attributes` for OTEL-based evaluators without affecting production code.
 
 ```python
 class EvalBuilder(SessionBuilder):
@@ -147,7 +147,7 @@ session = builder.build()
 response = session.invoke(case.input)
 ```
 
-See `scaffold/evals/conftest.py` for the full implementation with fixtures.
+See `templates/strands-agentcore/evals/conftest.py` for the full implementation with fixtures.
 
 ---
 
@@ -201,7 +201,7 @@ def test_output_quality(config, memory_exporter):
     reports = experiment.run_evaluations(task_fn)
 ```
 
-See `scaffold/evals/test_output.py` for the complete implementation.
+See `templates/strands-agentcore/evals/test_output.py` for the complete implementation.
 
 ---
 
@@ -231,7 +231,7 @@ return TaskOutput(output=str(response), trajectory=trajectory_names)
 return {"output": str(response), "trajectory": mapped}
 ```
 
-See `scaffold/evals/test_trajectory.py` for the complete dual-experiment pattern.
+See `templates/strands-agentcore/evals/test_trajectory.py` for the complete dual-experiment pattern.
 
 ---
 
@@ -272,7 +272,7 @@ mapper = StrandsInMemorySessionMapper()
 mapped = mapper.map_to_session(spans, session_id=case.session_id)
 ```
 
-See `scaffold/evals/test_traces.py` for the complete implementation.
+See `templates/strands-agentcore/evals/test_traces.py` for the complete implementation.
 
 ---
 
@@ -339,7 +339,7 @@ while user_sim.has_next():
     user_message = str(user_result.structured_output.message)
 ```
 
-See `scaffold/evals/test_simulation.py` for the complete implementation with span collection.
+See `templates/strands-agentcore/evals/test_simulation.py` for the complete implementation with span collection.
 
 ---
 
@@ -397,7 +397,7 @@ python evals/generate.py                          # all scenarios
 python evals/generate.py evals/scenarios/foo.yaml  # specific file
 ```
 
-Generated cases are saved to `evals/chats/generated_<name>.json` in the same format as hand-written cases. See `scaffold/evals/generate.py`.
+Generated cases are saved to `evals/chats/generated_<name>.json` in the same format as hand-written cases. See `templates/strands-agentcore/evals/generate.py`.
 
 ### Report Persistence
 

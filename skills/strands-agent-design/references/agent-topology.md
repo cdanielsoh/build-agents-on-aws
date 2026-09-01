@@ -30,7 +30,7 @@ agent = Agent(
 response = agent("What's the status of my recent order?")
 ```
 
-The scaffold demonstrates this pattern: `SessionBuilder` creates a single Agent with local tools and an optional MCPClient. See `scaffold/agent/core/builder.py`.
+The template demonstrates this pattern: `SessionBuilder` creates a single Agent with local tools and an optional MCPClient. See `templates/strands-agentcore/agent/core/builder.py`.
 
 ### When Single Agent Works
 

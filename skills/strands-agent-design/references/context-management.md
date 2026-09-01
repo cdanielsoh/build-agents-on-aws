@@ -36,7 +36,7 @@ Strands' default `SlidingWindowConversationManager` (40 messages) handles the ex
 - It has no awareness of cache TTL — it clears content that might have been cacheable
 - It doesn't differentiate between a 5,000-token file read result and a 50-token status check
 
-The `CacheSafeConversationManager` in the scaffold (`scaffold/agent/core/conversation.py`) adds cache-aware, tool-result-specific clearing before falling back to message removal.
+The `CacheSafeConversationManager` in the template (`templates/strands-agentcore/agent/core/conversation.py`) adds cache-aware, tool-result-specific clearing before falling back to message removal.
 
 ---
 
@@ -148,7 +148,7 @@ Tier 1 short-circuits Tier 2: if the cache is cold, Tier 1 handles clearing (for
 
 ### Relationship to Strands' Built-In Managers
 
-The scaffold's Tier 3 does simple message removal (like `SlidingWindowConversationManager`). For smarter handling, consider:
+The template's Tier 3 does simple message removal (like `SlidingWindowConversationManager`). For smarter handling, consider:
 
 - **`SummarizingConversationManager`**: Uses the model itself to summarize older messages before removing them. Preserves more context but costs an extra model call.
 - **Custom override**: Subclass `CacheSafeConversationManager` and override `_maybe_trim_messages()` to implement model-based summarization.
@@ -260,7 +260,7 @@ ContextManagerConfig(
 
 ## Integration with SessionBuilder
 
-The scaffold's `SessionBuilder` wires in the conversation manager via `_build_conversation_manager()`:
+The template's `SessionBuilder` wires in the conversation manager via `_build_conversation_manager()`:
 
 ```python
 class SessionBuilder:

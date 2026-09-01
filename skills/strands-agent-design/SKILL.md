@@ -40,7 +40,9 @@ This skill covers how to **design** well-architected agents — prompt architect
 
 It does **not** cover deployment infrastructure (CDK, AgentCore Runtime, MCP Gateway, auth). For that, see the `deploy-on-agentcore` skill.
 
-A complete reference scaffold is bundled at `scaffold/` — generalized, runnable agent code and eval tests you can use as a starting point.
+A runnable project template lives at the plugin root, not in this skill. Scaffold it with the
+`/new-agent` command rather than retyping files from these references — the command copies the
+tested template verbatim.
 
 ## The Six Pillars
 
@@ -109,7 +111,7 @@ Tool Results      DYNAMIC   — generated during agent loop
 
 ### 2. File-Based System Prompts
 
-Load system prompts from `.md` files at startup. They're version-controlled, reviewable in PRs, and composable from multiple files. See `scaffold/agent/prompts/system.py` for the wiring pattern.
+Load system prompts from `.md` files at startup. They're version-controlled, reviewable in PRs, and composable from multiple files. See `templates/strands-agentcore/agent/prompts/system.py` for the wiring pattern.
 
 ### 3. Dynamic Context via Tool Results
 
@@ -123,7 +125,7 @@ Three-tier compaction adapted from Claude Code for Bedrock's cache constraints:
 - **Tier 2 (count-based)**: If tool results > threshold, clear oldest (trades cache break for space)
 - **Tier 3 (message removal)**: If tokens > 80% of context window, remove oldest messages
 
-Uses `agent.state` for durable metadata (timestamps, entity mappings) that survives clearing. See `scaffold/agent/core/conversation.py` for the `CacheSafeConversationManager`.
+Uses `agent.state` for durable metadata (timestamps, entity mappings) that survives clearing. See `templates/strands-agentcore/agent/core/conversation.py` for the `CacheSafeConversationManager`.
 
 ### 5. Progressive Disclosure (Two-Layer Tools)
 
@@ -133,7 +135,7 @@ When latency is critical and you know what data is needed, pre-populate the user
 
 ### 6. ToolContext and Closure Factory
 
-Tools use `@tool(context=True)` with `ToolContext` to access `agent.state` (durable metadata) and `invocation_state` (per-request data). For heavy external dependencies (DB clients, API wrappers), closures capture them at construction time. See `scaffold/agent/tools/` for the full pattern.
+Tools use `@tool(context=True)` with `ToolContext` to access `agent.state` (durable metadata) and `invocation_state` (per-request data). For heavy external dependencies (DB clients, API wrappers), closures capture them at construction time. See `templates/strands-agentcore/agent/tools/` for the full pattern.
 
 ### 7. Tool Anti-Patterns
 
@@ -197,40 +199,42 @@ When tool count exceeds ~15 but the domain is cohesive, meta-tooling reduces sch
 
 **Important:** This is experimental. LLMs are trained to see tool descriptions upfront — meta-tooling defers them, which only works reliably with capable models (Sonnet, Opus). With Haiku, accuracy drops on multi-step reasoning. Always evaluate harshly before production use. See `references/meta-tooling.md`.
 
-## Scaffold
+## Project Template
 
-The `scaffold/` directory contains a generalized reference implementation:
+Run `/new-agent <dir>` to materialize a runnable project. **Do not hand-write these files
+from the references** — the command copies the tested template, which is pinned and
+lint-checked; retyping introduces drift.
 
 ```
-scaffold/
-├── agent/
-│   ├── app.py              # Production entrypoint (BedrockAgentCoreApp)
-│   ├── core/
-│   │   ├── config.py       # Frozen dataclass config
-│   │   ├── builder.py      # SessionBuilder with _build_* extension points
-│   │   ├── conversation.py # CacheSafeConversationManager (three-tier)
-│   │   └── session.py      # Thin runtime container (shared mutable state)
-│   ├── tools/
-│   │   ├── __init__.py     # make_tools() registry
-│   │   ├── context.py      # ToolContext usage guide
-│   │   └── example_tool.py # Example tool with ToolContext
-│   ├── meta_tooling/
-│   │   ├── category.py     # ToolCategory dataclass (local + MCP)
-│   │   ├── registry.py     # CategoryRegistry (catalog generation)
-│   │   ├── meta_tools.py   # get_tool_info + use_tool factories
-│   │   └── builder.py      # MetaToolingBuilder (SessionBuilder subclass)
-│   └── prompts/
-│       └── system.py       # File-based prompt builder
-└── evals/
-    ├── conftest.py         # EvalBuilder, fixtures, data loaders
-    ├── generate.py         # ExperimentGenerator auto-generation
-    ├── test_output.py      # Output-level eval
-    ├── test_trajectory.py  # Trajectory-level eval
-    ├── test_traces.py      # Trace-level eval
-    └── test_simulation.py  # Multi-turn simulation eval
+agent/
+  app.py              # BedrockAgentCoreApp entrypoint, singleton session
+  core/
+    config.py         # frozen dataclass config from env + SSM
+    builder.py        # SessionBuilder with _build_* extension points
+    conversation.py   # context-pressure policy over native Strands features
+    session.py        # thin runtime container (shared mutable headers)
+  tools/
+    __init__.py       # make_tools() registry
+    context.py        # ToolContext usage guide
+    example_tool.py   # example tool with ToolContext
+  meta_tooling/       # optional: schema-level progressive disclosure
+  prompts/
+    system.md         # the prompt itself
+    system.py         # loader
+evals/
+  conftest.py         # EvalBuilder, fixtures, data loaders
+  generate.py         # ExperimentGenerator auto-generation
+  test_output.py      # response quality
+  test_trajectory.py  # tool-call sequence
+  test_traces.py      # OTEL span quality
+  test_simulation.py  # multi-turn behaviour
+  chats/ rubrics/ personas/ scenarios/   # fixtures
+Dockerfile            # ARM64 + ADOT instrumentation
+pyproject.toml        # pinned dependencies
 ```
 
-Copy these files as a starting point and adapt to your domain.
+The references below explain *why* each piece looks the way it does. Read them when
+adapting the template, not to reconstruct it.
 
 ## Getting Started
 

@@ -1,0 +1,40 @@
+[project]
+name = "my-agent"
+version = "0.1.0"
+description = "Strands agent on Bedrock AgentCore Runtime"
+requires-python = ">=3.12"
+
+# Pinned to a tested floor with a compatible-release ceiling. Bump deliberately —
+# the Strands minor line moves fast and has shipped breaking changes (see
+# CHANGELOG notes in the deploy-on-agentcore skill).
+dependencies = [
+    "strands-agents[otel]~=1.54",
+    "strands-agents-tools~=0.8.7",
+    "bedrock-agentcore~=1.22",
+    "aws-opentelemetry-distro>=0.12",
+    "boto3>=1.40",
+    "mcp>=1.9,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "strands-agents-evals~=1.2",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pyyaml>=6.0",
+    "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["evals"]
+# Eval files are named test_* but call live models. Run them explicitly.
+addopts = "-p no:cacheprovider"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["agent", "evals"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

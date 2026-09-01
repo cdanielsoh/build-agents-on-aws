@@ -219,7 +219,7 @@ def build_system_prompt() -> str:
     return (_PROMPT_DIR / "system.md").read_text()
 ```
 
-The scaffold demonstrates this at `scaffold/agent/prompts/system.py`.
+The template demonstrates this at `templates/strands-agentcore/agent/prompts/system.py`.
 
 ### Multi-Section Composition
 
@@ -260,7 +260,7 @@ def _build_agent(self, tools, hooks, session_manager=None):
     )
 ```
 
-See `scaffold/agent/core/builder.py` for the full implementation with `_build_model()` as a separate overridable step.
+See `templates/strands-agentcore/agent/core/builder.py` for the full implementation with `_build_model()` as a separate overridable step.
 
 ---
 
