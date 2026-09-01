@@ -104,6 +104,11 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Write a RESPONSE interceptor (redaction, filtering) | `references/gateway-and-mcp.md`       |
 | Handle interceptors with response streaming         | `references/gateway-and-mcp.md`       |
 | Work around the interceptor 6 MB payload limit      | `references/gateway-and-mcp.md`       |
+| Publish an agent, MCP server, or skill for discovery | `references/agent-registry.md`       |
+| Search a registry / expose it as an MCP endpoint    | `references/agent-registry.md`        |
+| Decide registry topology and discovery boundaries   | `references/agent-registry.md`        |
+| Migrate off the bedrock-agentcore registry namespace | `references/agent-registry.md`       |
+| Rate-limit callers, tools, or tokens per minute     | `references/gateway-and-mcp.md`       |
 | Set PostgreSQL RLS scope without leaking it         | `references/security.md`             |
 | Test that a security control actually works         | `references/security.md`             |
 | Pin container images so deploys are not silent no-ops | `references/cdk-infrastructure.md` |
@@ -256,11 +261,35 @@ optional and missing fields **fall back to reference-free scoring rather than er
 mistyped field name yields a plausible-but-different score instead of a failure. See
 `references/evaluations.md`.
 
-### 9. AgentCore Memory
+### 9. Agent Registry — Publish and Discover
+
+**GA under the `agent-registry` namespace; the preview `bedrock-agentcore` namespace is
+discontinued 2026-09-17.** Records are typed (`AGENT`, `MCP`, `SKILL`, `CUSTOM`), carry exactly
+one protocol descriptor validated against the official schema (MCP `server.json`, A2A agent
+card, AgentSkills), and move through DRAFT → PENDING_APPROVAL → APPROVED with deprecation as a
+**terminal, irreversible** state — to hide a record temporarily, reject it instead.
+
+Discovery is hybrid semantic + keyword search, and `InvokeRegistryMcp` exposes the registry
+*as an MCP endpoint*, so "find me a tool for X" becomes a tool call rather than registry-specific
+SDK code.
+
+**Topology is forced, not stylistic:** search takes exactly one registry per call, filters cover
+only `name`/`recordType`/`recordVersion`, and inbound authorization is per registry with no
+per-record policy. One shared registry therefore lets every authenticated consumer search
+everything, and scoping degrades to convention. One registry per boundary makes it an
+authentication boundary instead. Mirror it in your gateway topology so the same rule is enforced
+in discovery and invocation.
+
+Also note authorization type and JWT discovery URL are **immutable after creation**, control-plane
+APIs always require IAM regardless of the registry's setting, and discovery is eventually
+consistent (seconds, sometimes minutes) while control-plane reads are not. See
+`references/agent-registry.md`.
+
+### 10. AgentCore Memory
 
 Three strategy types: User Preferences (cross-session), Semantic Memory (extracted facts), Conversation Summaries (per-session). Namespace design with `{actorId}` from Cognito JWT `sub` claim (extracted via base64, no PyJWT needed). **Must use `batch_size=1`** (the default) because containers are hard-killed without SIGTERM — larger batches risk data loss.
 
-### 10. Observability (ADOT)
+### 11. Observability (ADOT)
 
 AgentCore Runtime includes an ADOT sidecar. Setup is four steps, and the fourth is the one
 people miss:
@@ -285,7 +314,7 @@ missing Transaction Search means **Evaluations finds no sessions**. Neither rais
 Session grouping runs on `gen_ai.conversation.id` and `session.id` — the same attributes the
 eval suite injects via `trace_attributes`. See `references/observability.md`.
 
-### 11. CDK Infrastructure
+### 12. CDK Infrastructure
 
 Two agent-specific stacks:
 - **MCPGatewayStack**: Gateway + interceptor + Lambda targets + tool schemas
@@ -293,7 +322,7 @@ Two agent-specific stacks:
 
 Plus minimal Cognito User Pool if no OIDC provider exists.
 
-### 12. Streaming Protocol & Interrupts
+### 13. Streaming Protocol & Interrupts
 
 AgentCore streams responses as SSE with nested JSON events (`contentBlockDelta`, `messageStop`, etc.). Key behaviors: `stopReason=end_turn` means normal completion; `stopReason=interrupt` means HITL pause — caller must collect user response and resume with `interrupt_responses` payload. Session IDs must be minimum 33 characters and consistent across the entire conversation including interrupt resumptions.
 
@@ -308,6 +337,7 @@ For a new agent project, work through the references in this order:
 5. **`references/identity.md`** — Wire outbound auth (2LO/3LO) to downstream APIs
 6. **`references/policy.md`** — Add Cedar authorization on tool calls (start in LOG_ONLY)
 7. **`references/agentcore-memory.md`** — Configure persistent conversation memory
-8. **`references/streaming-backend.md`** — Understand the streaming event format and interrupt protocol
-9. **`references/observability.md`** — Turn on tracing properly; it gates everything below
-10. **`references/evaluations.md`** — Score the deployed agent from its traces, in batch then online
+8. **`references/agent-registry.md`** — Publish agents/tools/skills and set discovery boundaries
+9. **`references/streaming-backend.md`** — Understand the streaming event format and interrupt protocol
+10. **`references/observability.md`** — Turn on tracing properly; it gates everything below
+11. **`references/evaluations.md`** — Score the deployed agent from its traces, in batch then online
