@@ -27,16 +27,19 @@ Layer 1: AgentCore Runtime
 
 Layer 2: MCP Gateway
   - Validates JWT independently (same Cognito, separate check)
-  - Interceptor extracts and forwards Authorization header
+  - Cedar policy engine decides which TOOL the caller may invoke
 
-Layer 3: Application (MCP Lambda / API)
-  - Extracts user identity from token
-  - Scopes ALL queries to authenticated user
-  - Never trusts agent-provided IDs without mapping
+Layer 3: REQUEST interceptor
+  - Verifies the JWT again, strips forged scope, injects the trusted one
+  - The only place identity crosses into the tool's world
 
-Layer 4: Database
-  - IAM-level enforcement prevents cross-user access
-  - Even if application code has a bug, DB rejects unauthorized queries
+Layer 4: Application (MCP Lambda / API)
+  - Reads the INJECTED scope; never its own arguments, never the agent's word
+  - Scopes ALL queries to it
+
+Layer 5: Database
+  - RLS / LeadingKeys decides which ROWS come back
+  - Even if application code has a bug, the DB rejects unauthorized queries
 ```
 
 ### DynamoDB: LeadingKeys Pattern (Recommended)
@@ -192,13 +195,23 @@ AgentCore Runtime
     v
 MCP Gateway
     - CUSTOM_JWT authorizer validates independently
-    - Interceptor Lambda extracts from mcp.gatewayRequest.headers
-    - Forwards via transformedGatewayRequest.headers
+    - Cedar policy engine decides WHICH TOOL (sees claims via principal.getTag)
+    |
+    v
+REQUEST Interceptor Lambda  (passRequestHeaders: true)
+    - Reads Authorization from mcp.gatewayRequest.headers
+    - Verifies signature / issuer / audience / expiry against JWKS
+    - STRIPS any caller-supplied _scope, then injects the trusted one
+    - Returns mcp.transformedGatewayRequest.body
     |
     v
 Lambda MCP Target
-    - Receives in context.client_context.custom.bedrockAgentCorePropagatedHeaders
-    - Uses token for downstream API calls or extracts user ID for DB queries
+    - Reads event["_scope"] — injected, never from its own arguments
+    - Opens a transaction, SET LOCAL from the scope, queries
+    |
+    v
+Aurora / DynamoDB
+    - RLS or LeadingKeys decides WHICH ROWS
     |
     v
 Backend API / Database

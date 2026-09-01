@@ -19,7 +19,7 @@ Agent
   v
 MCP Gateway (single endpoint)
   |-- OAuth validation (CUSTOM_JWT)
-  |-- Interceptor Lambda (header forwarding)
+  |-- Interceptor Lambda (identity -> trusted scope)
   |
   +-- Target A: Lambda MCP (user-data tools)
   +-- Target B: Lambda MCP (catalog tools)
@@ -38,7 +38,7 @@ Gateway is the recommended pattern for most use cases. Direct connections make s
 ### Gateway Components
 
 1. **Gateway Resource** — CfnGateway with `CUSTOM_JWT` authorizer pointing to Cognito
-2. **Interceptor Lambda** — Extracts Authorization header, forwards to targets
+2. **Interceptor Lambda** — The only way identity reaches a Lambda target. Verifies the JWT and injects a trusted scope into the tool call; see `security.md`
 3. **Lambda Targets** — Each target is a Lambda function with tool schema definitions
 4. **Tool Schemas** — Declared in CDK, Gateway knows all available tools for semantic routing
 
@@ -52,7 +52,13 @@ For example, if target is `user-data-mcp-target` and tool is `get_profile`, the 
 
 ## Interceptor Lambda
 
-Interceptors are Lambda functions that execute during each Gateway invocation. They let you run custom logic at specific points in the request/response lifecycle — validation, transformation, header forwarding, access control, or response filtering.
+Interceptors are Lambda functions that execute during each Gateway invocation. They let you run custom logic at specific points in the request/response lifecycle — validation, transformation, access control, or response filtering.
+
+**For any multi-tenant agent, the REQUEST interceptor is not optional.** A Lambda target
+receives only the tool's `inputSchema` properties and gateway/target/tool IDs — no JWT. The
+interceptor is the only supported place to turn a verified token into data the tool receives.
+Read [security.md](security.md#request-interceptor-the-only-bridge) before writing one; the
+strip-before-inject rule there is what stops the model forging its own scope.
 
 ### Types and Lifecycle
 
