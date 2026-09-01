@@ -18,6 +18,11 @@ description: >
   CompleteResourceTokenAuth, GetResourceOauth2Token, per-user downstream
   tokens, offloading a hand-rolled OAuth implementation, or connecting an
   agent to ServiceNow / Okta / Google / GitHub / Salesforce on a user's behalf.
+  Trigger on authorization-policy topics: AgentCore Policy, policy engine,
+  Cedar policy, Cedar schema, permit/forbid statements, AgentCore::OAuthUser,
+  AgentCore::Gateway, tool-level authorization, fine-grained access control
+  for tools, LOG_ONLY vs ENFORCE, enforcementMode, policy generation,
+  LogOnlyDecisionFlips, or guardrails in policy.
 ---
 
 # Building Agents on AWS Bedrock AgentCore
@@ -67,6 +72,10 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Offload OAuth (PKCE, state, code exchange, refresh) | `references/identity.md`             |
 | Set up an OAuth2 credential provider / token vault  | `references/identity.md`             |
 | Store per-user downstream tokens                    | `references/identity.md`             |
+| Authorize individual tool calls with Cedar          | `references/policy.md`               |
+| Constrain tool arguments (refund ceilings, scoping) | `references/policy.md`               |
+| Shadow-test an authorization rule on real traffic   | `references/policy.md`               |
+| Generate Cedar policies from natural language       | `references/policy.md`               |
 | Write CDK stacks for Runtime, Gateway, Backend      | `references/cdk-infrastructure.md`   |
 | Understand AgentCore streaming event format          | `references/streaming-backend.md`    |
 | Implement the interrupt resume protocol              | `references/streaming-backend.md`    |
@@ -143,11 +152,32 @@ See `references/identity.md` — including the gotchas that fail confusingly (se
 workload identities, `userToken` vs `userId` session binding, the required MCP protocol
 version, and FastMCP stripping the `authorization` header).
 
-### 7. AgentCore Memory
+### 7. Policy — Cedar Authorization on Tool Calls
+
+A **policy engine** attached to a Gateway evaluates Cedar policies on every `tools/call`,
+against a schema **auto-generated from the Gateway's tool manifest**. Cedar is default-deny
+with forbid-wins. Each tool becomes an action (`<target>___<tool>`); the principal is
+`AgentCore::OAuthUser` (JWT claims exposed as **tags**) or `AgentCore::IamEntity`; the only
+context is `context.input` — the tool's arguments. That makes argument-level rules expressible
+("refunds ≤ $500", "actorId must equal the caller's `sub`"), and anything needing time of day
+or source IP not expressible.
+
+**Two separate settings share the value `LOG_ONLY`,** and confusing them is the likeliest way
+to think you are enforcing when you are not: engine-level `policyEngineConfiguration.mode`
+(`ENFORCE`|`LOG_ONLY`) governs the whole engine and **takes precedence**, while per-policy
+`enforcementMode` (`ACTIVE`|`LOG_ONLY`) shadow-tests one rule inside an enforcing engine.
+Promote when the `LogOnlyDecisionFlips` metric holds at zero.
+
+Two Cedar limits shape your design up front: **no string concatenation** (so you cannot build
+`"/actors/" + sub` — the IdP must issue a claim already holding the full value) and **no action
+wildcards** (so adding a tool to a target is also a policy change; under default-deny the new
+tool is denied until listed). See `references/policy.md`.
+
+### 8. AgentCore Memory
 
 Three strategy types: User Preferences (cross-session), Semantic Memory (extracted facts), Conversation Summaries (per-session). Namespace design with `{actorId}` from Cognito JWT `sub` claim (extracted via base64, no PyJWT needed). **Must use `batch_size=1`** (the default) because containers are hard-killed without SIGTERM — larger batches risk data loss.
 
-### 8. Observability (ADOT)
+### 9. Observability (ADOT)
 
 AgentCore Runtime includes an ADOT sidecar for traces and metrics. Setup:
 1. Add `strands-agents[otel]` and `aws-opentelemetry-distro` to requirements
@@ -156,7 +186,7 @@ AgentCore Runtime includes an ADOT sidecar for traces and metrics. Setup:
 
 Critical IAM: `logs:DescribeLogGroups` on `log-group:*` is required or no `[runtime-logs]` streams are created.
 
-### 9. CDK Infrastructure
+### 10. CDK Infrastructure
 
 Two agent-specific stacks:
 - **MCPGatewayStack**: Gateway + interceptor + Lambda targets + tool schemas
@@ -164,7 +194,7 @@ Two agent-specific stacks:
 
 Plus minimal Cognito User Pool if no OIDC provider exists.
 
-### 10. Streaming Protocol & Interrupts
+### 11. Streaming Protocol & Interrupts
 
 AgentCore streams responses as SSE with nested JSON events (`contentBlockDelta`, `messageStop`, etc.). Key behaviors: `stopReason=end_turn` means normal completion; `stopReason=interrupt` means HITL pause — caller must collect user response and resume with `interrupt_responses` payload. Session IDs must be minimum 33 characters and consistent across the entire conversation including interrupt resumptions.
 
@@ -177,5 +207,6 @@ For a new agent project, work through the references in this order:
 3. **`references/runtime-and-sessions.md`** — Build the agent container with singleton session
 4. **`references/security.md`** — Add multi-layer auth and token propagation
 5. **`references/identity.md`** — Wire outbound auth (2LO/3LO) to downstream APIs
-6. **`references/agentcore-memory.md`** — Configure persistent conversation memory
-7. **`references/streaming-backend.md`** — Understand the streaming event format and interrupt protocol
+6. **`references/policy.md`** — Add Cedar authorization on tool calls (start in LOG_ONLY)
+7. **`references/agentcore-memory.md`** — Configure persistent conversation memory
+8. **`references/streaming-backend.md`** — Understand the streaming event format and interrupt protocol
