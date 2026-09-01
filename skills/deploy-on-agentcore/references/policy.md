@@ -181,6 +181,18 @@ pattern, which rules out the same class of dynamic matching.
 covered by an existing allowlist — adding tools to a target is a policy change too, and
 under default-deny the new tool is denied until you add it.
 
+The practical mitigation is **topology**: group tools into targets along the same lines you
+want to authorize, so one `action in [...]` list per target stays short and a whole capability
+can be granted or withheld coherently. Which makes the **target name load-bearing** — Gateway
+exposes tools as `{target}___{tool}` and your Cedar actions must use the same prefix. Rename a
+target and every policy naming it becomes dead; default-deny then silently blocks the tool
+with no error anywhere. Assert the target-name/action-prefix agreement in a test.
+
+**A policy naming specific actions must name a specific gateway ARN**, which pushes the same
+decision up a level: one gateway per authorization domain rather than one gateway holding
+every team's tools in a single Cedar namespace and a single tool manifest. Splitting gateways
+by domain also makes the boundary an *authentication* boundary, not just a policy one.
+
 **No custom attributes on `OAuthUser`.** Tags only.
 
 **No entity types outside the `AgentCore` namespace**, and you cannot define new ones.
@@ -208,6 +220,12 @@ forbid (
 
 This is the one place `context.output` is available. Choosing the threshold is exactly what
 `LOG_ONLY` mode is for — see below.
+
+> **Guardrails-in-policy is not available in every region** — at the time of writing, five,
+> which notably excludes `us-west-2` and `ap-northeast-2`. This is a region-selection
+> constraint, not a runtime one: discovering it after choosing a region means moving the whole
+> stack. Verify availability for your target region before committing to this feature, and
+> note that the rest of AgentCore Policy is unaffected.
 
 ---
 
@@ -328,8 +346,87 @@ await policy_create(
 
 ## Configuration
 
-Declare engines and policies in `agentcore.json`; they are created by `agentcore deploy`.
-There are no `agentcore add policy-engine` / `add policy` subcommands — edit the file.
+Two equally supported paths. Use **CDK** when AgentCore resources live alongside existing CDK
+infrastructure — VPC, Aurora, Lambda, IAM — which is the common enterprise case. Use
+**`agentcore.json`** when the agent project is self-contained.
+
+### CDK (`aws_cdk.aws_bedrockagentcore`)
+
+L1 constructs exist for the whole surface: `CfnPolicyEngine`, `CfnPolicy`, `CfnGateway`,
+`CfnGatewayTarget`, `CfnRuntime`, `CfnRuntimeEndpoint`, `CfnMemory`, `CfnEvaluator`,
+`CfnOnlineEvaluationConfig`, `CfnDataset`, `CfnOAuth2CredentialProvider`,
+`CfnApiKeyCredentialProvider`, `CfnTokenVault`, `CfnWorkloadIdentity`, `CfnResourcePolicy`,
+`CfnBrowser`, `CfnCodeInterpreter`.
+
+```python
+from aws_cdk import aws_bedrockagentcore as agentcore
+
+engine = agentcore.CfnPolicyEngine(
+    self, "PolicyEngine",
+    name="northwind_governance",
+    description="Cedar authorization, generated from access_matrix.py",
+)
+
+policy = agentcore.CfnPolicy(
+    self, f"Policy{name}",
+    policy_engine_id=engine.attr_policy_engine_id,
+    name=name,
+    description=description[:4096],
+    definition=agentcore.CfnPolicy.PolicyDefinitionProperty(
+        cedar=agentcore.CfnPolicy.CedarPolicyProperty(statement=statement)
+    ),
+    # Schema checks always run. FAIL_ON_ANY_FINDINGS additionally rejects semantic
+    # findings like ALLOW_ALL / DENY_ALL — the mistakes that would quietly neuter
+    # your access model. Fail the deploy rather than accept the policy.
+    validation_mode="FAIL_ON_ANY_FINDINGS",
+)
+policy.node.add_dependency(engine)
+```
+
+#### Four ordering traps, each of which costs a deploy cycle
+
+**Never construct a gateway ARN by hand — use `attr_gateway_arn`.** AgentCore appends a
+generated suffix to the gateway name, so `gw-sales` becomes `gw-sales-knnupyrgso`. A
+constructed ARN names a gateway that does not exist, and `CreatePolicy` fails with *"Failed to
+confirm existence on AgentCore Gateway … make sure you have GetGateway permissions"* — an IAM
+error message for a problem that has nothing to do with IAM. `attr_gateway_arn` is an
+unresolved token at synth time; CDK substitutes it into the Cedar statement at deploy.
+
+**Policies validate against the gateway's tool manifest, so the engine *and every target* must
+exist first.** Declare the dependencies explicitly; synth order is not deploy order.
+
+**Build the engine before the role that references it.** The role's policy names the engine
+ARN and the engine does not reference the role, so that direction is acyclic. Building the
+role first leaves the ARN unknown.
+
+**Gateways must depend on the role's inline-policy child, not just the role.** Otherwise
+`CreateGateway` races the permission attachment and fails with *"Access denied while
+calling…"*. CDK names that child `DefaultPolicy`; look it up and fail at synth if it is
+missing rather than deploying a template with the race in it.
+
+#### Gateway role permissions for Policy
+
+```python
+actions=["bedrock-agentcore:GetPolicyEngine"]          # on the engine ARN
+actions=[
+    "bedrock-agentcore:AuthorizeAction",
+    "bedrock-agentcore:PartiallyAuthorizeActions",     # on engine ARN + gateway ARNs
+]
+```
+
+`PartiallyAuthorizeActions` is what filters `tools/list` per caller — it is why two personas
+see different tool sets rather than the same list with failures on invocation. Omit it and
+authorization still works on invoke, but tool discovery stops being scoped.
+
+Because the gateways reference the role, the role cannot name the gateway ARNs without
+creating a cycle. Scope by ARN prefix instead:
+`arn:aws:bedrock-agentcore:{region}:{account}:gateway/*`.
+
+### `agentcore.json`
+
+Declare engines and policies in `agentcore.json`; they are created by `agentcore deploy`
+(which itself deploys via CDK). There are no `agentcore add policy-engine` / `add policy`
+subcommands — edit the file.
 
 ```json
 {
@@ -454,6 +551,16 @@ RLS / LeadingKeys at the data    → security.md   (what the data layer will han
 A compromised agent that gets past Cedar should still be stopped by the data layer. Keep
 per-user enforcement in the database even with policies in place — Cedar constrains the tool
 call, not the query the tool ultimately runs.
+
+**The state worth designing for is ALLOW plus zero rows.** A caller invokes a tool Cedar
+permits, and RLS returns nothing because none of the rows are theirs. Both controls did their
+job, and they are not redundant: Cedar could not have filtered the rows, and RLS could not have
+prevented the call. A demo or test suite that only ever shows a `DENY` has not shown
+defence in depth — it has shown one layer working twice.
+
+Which is also why the interceptor matters so much: it is the only thing that carries verified
+identity from Cedar's world into RLS's. **Cedar gates tools. RLS gates rows. The interceptor
+is the only bridge between them.** See [security.md](security.md#request-interceptor-the-only-bridge).
 
 For enforcing the same decisions *inside* the agent — before a call ever reaches the Gateway —
 see `InterventionHandler` returning `Deny` in the `strands-agent-design` skill's

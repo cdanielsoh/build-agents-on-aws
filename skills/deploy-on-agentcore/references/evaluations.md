@@ -277,7 +277,22 @@ dataset = Dataset(scenarios=[
 dataset = FileDatasetProvider("dataset.json").get_dataset()
 ```
 
-Relevant SDK surface in `bedrock_agentcore.evaluation`:
+### In CDK
+
+Evaluation resources are declarable alongside the rest of your infrastructure, so an evaluator
+and the online config that uses it version with the agent they grade:
+
+| Construct | Resource |
+|---|---|
+| `CfnEvaluator` | Custom evaluator (LLM-as-judge, code-based, or derived) |
+| `CfnOnlineEvaluationConfig` | Online evaluation — sampling rules and evaluator selection |
+| `CfnDataset` | Dataset for dataset evaluation |
+
+Built-in evaluators need no resource — reference them by ID (`Builtin.Helpfulness`).
+
+### SDK
+
+Relevant surface in `bedrock_agentcore.evaluation`:
 `OnDemandEvaluationDatasetRunner`, `BatchEvaluationRunner`, `EvaluationClient`,
 `SimulatedScenario`, `ActorProfile`, `SimulationConfig`,
 `CloudWatchAgentSpanCollector`, `fetch_spans_from_cloudwatch`,

@@ -44,12 +44,19 @@ description: >
 > `bedrock-agentcore-control` API model and the AWS devguide. If your version differs, verify
 > before trusting these APIs.
 >
-> **`bedrock-agentcore-starter-toolkit` is deprecated.** The declarative path is now the
-> `agentcore` CLI (`npm install -g @aws/agentcore`) plus an `agentcore.json` deployed via
-> `agentcore deploy`, which is also where Policy engines are configured. The CDK stacks in
-> `references/cdk-infrastructure.md` remain valid and are the right choice when AgentCore
-> resources must live alongside existing CDK infrastructure; the `bedrock-agentcore` SDK
-> itself is unaffected and remains the runtime library.
+> **CDK is fully current.** What AWS deprecated is the Python
+> `bedrock-agentcore-starter-toolkit`, not CDK — the `agentcore` CLI's own `deploy` command is
+> documented as deploying "via CDK", so CDK is the mechanism underneath, not the thing being
+> replaced. `aws_cdk.aws_bedrockagentcore` carries L1 constructs for every component in this
+> skill: `CfnRuntime`, `CfnRuntimeEndpoint`, `CfnGateway`, `CfnGatewayTarget`, `CfnMemory`,
+> `CfnPolicyEngine`, `CfnPolicy`, `CfnEvaluator`, `CfnOnlineEvaluationConfig`, `CfnDataset`,
+> `CfnOAuth2CredentialProvider`, `CfnApiKeyCredentialProvider`, `CfnTokenVault`,
+> `CfnWorkloadIdentity`, `CfnResourcePolicy`, `CfnBrowser`, `CfnCodeInterpreter`.
+>
+> Choose **CDK** when AgentCore resources live alongside existing infrastructure (VPC, Aurora,
+> Lambda, IAM) — the common enterprise case. Choose **`agentcore.json` + `agentcore deploy`**
+> when the agent project is self-contained. The `bedrock-agentcore` SDK is the runtime library
+> either way.
 
 This skill covers the full architecture for deploying AI agents on Bedrock AgentCore — from the agent container through MCP Gateway to Lambda-based tool servers, with OAuth authentication, security patterns, and CDK infrastructure.
 

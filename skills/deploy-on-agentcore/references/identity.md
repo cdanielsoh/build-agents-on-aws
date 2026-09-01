@@ -160,6 +160,27 @@ agentcore add credential \
   --scopes read,write
 ```
 
+### In CDK
+
+L1 constructs cover the Identity surface, which is what you want when these resources sit
+alongside existing CDK infrastructure:
+
+| Construct | Resource |
+|---|---|
+| `CfnOAuth2CredentialProvider` | OAuth2 credential provider |
+| `CfnApiKeyCredentialProvider` | API key credential provider |
+| `CfnWorkloadIdentity` | Workload identity (incl. `allowedResourceOauth2ReturnUrls`) |
+| `CfnTokenVault` | Token vault, including CMK configuration |
+| `CfnResourcePolicy` | Resource-based policy on Runtime / Endpoint / Gateway |
+
+```python
+from aws_cdk import aws_bedrockagentcore as agentcore
+```
+
+Keep the client secret out of the template. Reference an existing Secrets Manager secret
+(`clientSecretSource: EXTERNAL`) rather than passing a literal — a secret in a CDK template
+is a secret in CloudFormation's stack history and in every `cdk diff` output.
+
 ---
 
 ## 2LO: Client Credentials
