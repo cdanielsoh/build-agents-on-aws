@@ -11,6 +11,13 @@ description: >
   MCP Gateway, AgentCore Memory, BedrockAgentCoreApp, CfnRuntime, CfnGateway,
   or agent + Lambda + MCP patterns. Also trigger when users ask about
   multi-layer authorization in agent systems or token propagation chains.
+  Trigger on outbound authorization topics: AgentCore Identity, 2LO, 3LO,
+  two-legged or three-legged OAuth, client credentials vs authorization code,
+  USER_FEDERATION, M2M auth flow, token vault, workload identity,
+  OAuth2 credential provider, requires_access_token, requires_api_key,
+  CompleteResourceTokenAuth, GetResourceOauth2Token, per-user downstream
+  tokens, offloading a hand-rolled OAuth implementation, or connecting an
+  agent to ServiceNow / Okta / Google / GitHub / Salesforce on a user's behalf.
 ---
 
 # Building Agents on AWS Bedrock AgentCore
@@ -55,6 +62,11 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Implement row-level security / multi-layer auth     | `references/security.md`             |
 | Understand the token propagation chain              | `references/security.md`             |
 | Integrate AgentCore Memory for persistence          | `references/agentcore-memory.md`     |
+| Call a downstream API as the agent itself (2LO)     | `references/identity.md`             |
+| Call a downstream API as the end user (3LO)         | `references/identity.md`             |
+| Offload OAuth (PKCE, state, code exchange, refresh) | `references/identity.md`             |
+| Set up an OAuth2 credential provider / token vault  | `references/identity.md`             |
+| Store per-user downstream tokens                    | `references/identity.md`             |
 | Write CDK stacks for Runtime, Gateway, Backend      | `references/cdk-infrastructure.md`   |
 | Understand AgentCore streaming event format          | `references/streaming-backend.md`    |
 | Implement the interrupt resume protocol              | `references/streaming-backend.md`    |
@@ -104,11 +116,38 @@ Both use FastMCP for tool definitions and a handler that translates Gateway invo
 
 **Token Propagation Chain**: OAuth token flows through the entire system — Client → Backend → Runtime → Gateway → Lambda → Database — validated independently at each hop.
 
-### 6. AgentCore Memory
+### 6. Identity — Outbound Auth (2LO vs 3LO)
+
+**Inbound** auth answers "who is calling my agent" (`CUSTOM_JWT` on Runtime/Gateway).
+**Outbound** auth answers "how does my agent authenticate to a downstream API" — that is
+AgentCore Identity, and it is a separate concern.
+
+| | 2LO | 3LO |
+|---|---|---|
+| Grant | `CLIENT_CREDENTIALS` / `auth_flow="M2M"` | `AUTHORIZATION_CODE` / `auth_flow="USER_FEDERATION"` |
+| Acts as | The application | The end user |
+| Token scope | One per workload | One **per user**, keyed by inbound JWT `sub` |
+| Downstream ACLs | Service account's | The real user's |
+
+Use 3LO whenever the downstream system has per-user permissions you must respect — a service
+account sees everything and misattributes every action. A third grant, `TOKEN_EXCHANGE`,
+swaps the inbound token for a downstream one with no interactive consent.
+
+Adopting this deletes your PKCE pair generation, `state` store, authorize-URL builder,
+code-exchange POST, token persistence, and refresh logic. Maximum offload is a Gateway
+MCP-server target with `grantType: AUTHORIZATION_CODE` — the Gateway injects the per-user
+token and the MCP server holds no credentials at all. **Gateway does not manage 3LO for
+Lambda targets**; those use the `@requires_access_token` decorator in-process instead.
+
+See `references/identity.md` — including the gotchas that fail confusingly (service-linked
+workload identities, `userToken` vs `userId` session binding, the required MCP protocol
+version, and FastMCP stripping the `authorization` header).
+
+### 7. AgentCore Memory
 
 Three strategy types: User Preferences (cross-session), Semantic Memory (extracted facts), Conversation Summaries (per-session). Namespace design with `{actorId}` from Cognito JWT `sub` claim (extracted via base64, no PyJWT needed). **Must use `batch_size=1`** (the default) because containers are hard-killed without SIGTERM — larger batches risk data loss.
 
-### 7. Observability (ADOT)
+### 8. Observability (ADOT)
 
 AgentCore Runtime includes an ADOT sidecar for traces and metrics. Setup:
 1. Add `strands-agents[otel]` and `aws-opentelemetry-distro` to requirements
@@ -117,7 +156,7 @@ AgentCore Runtime includes an ADOT sidecar for traces and metrics. Setup:
 
 Critical IAM: `logs:DescribeLogGroups` on `log-group:*` is required or no `[runtime-logs]` streams are created.
 
-### 8. CDK Infrastructure
+### 9. CDK Infrastructure
 
 Two agent-specific stacks:
 - **MCPGatewayStack**: Gateway + interceptor + Lambda targets + tool schemas
@@ -125,7 +164,7 @@ Two agent-specific stacks:
 
 Plus minimal Cognito User Pool if no OIDC provider exists.
 
-### 9. Streaming Protocol & Interrupts
+### 10. Streaming Protocol & Interrupts
 
 AgentCore streams responses as SSE with nested JSON events (`contentBlockDelta`, `messageStop`, etc.). Key behaviors: `stopReason=end_turn` means normal completion; `stopReason=interrupt` means HITL pause — caller must collect user response and resume with `interrupt_responses` payload. Session IDs must be minimum 33 characters and consistent across the entire conversation including interrupt resumptions.
 
@@ -137,5 +176,6 @@ For a new agent project, work through the references in this order:
 2. **`references/gateway-and-mcp.md`** — Create MCP Gateway and Lambda MCP servers
 3. **`references/runtime-and-sessions.md`** — Build the agent container with singleton session
 4. **`references/security.md`** — Add multi-layer auth and token propagation
-5. **`references/agentcore-memory.md`** — Configure persistent conversation memory
-6. **`references/streaming-backend.md`** — Understand the streaming event format and interrupt protocol
+5. **`references/identity.md`** — Wire outbound auth (2LO/3LO) to downstream APIs
+6. **`references/agentcore-memory.md`** — Configure persistent conversation memory
+7. **`references/streaming-backend.md`** — Understand the streaming event format and interrupt protocol
