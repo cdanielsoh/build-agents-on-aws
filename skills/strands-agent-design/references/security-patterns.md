@@ -25,7 +25,7 @@ from strands import Agent
 from strands.models import BedrockModel
 
 model = BedrockModel(
-    model_id="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    model_id="global.anthropic.claude-sonnet-5",
     guardrail_id="your-guardrail-id",
     guardrail_version="1",
     guardrail_trace="enabled",  # debugging info in responses
@@ -257,9 +257,14 @@ Wire it in the builder — once, at session construction:
 
 ```python
 class SessionBuilder:
-    def _init_agent_state(self, agent: Agent, token: str) -> None:
-        agent.state.set("user_id", _resolve_actor_id(token))
+    def _build_state(self, token: str) -> dict:
+        return {"user_id": _resolve_actor_id(token)}
+
+    # ... passed through as Agent(..., state=self._build_state(token))
 ```
+
+Prefer passing initial state to the constructor over mutating `agent.state` afterwards —
+there is then no window in which the agent exists without an identity.
 
 Tools read identity from `agent.state` via `ToolContext` — it's invisible to the model:
 
@@ -428,7 +433,7 @@ class EntityIndexMapper:
             self._state.set(self._key(suffix), {})
 ```
 
-All state keys are prefixed with `_eim_{namespace}_` to avoid collisions with other `agent.state` users (like the `_cm_` keys used by `CacheSafeConversationManager`).
+All state keys are prefixed with `_eim_{namespace}_` to avoid collisions with other `agent.state` users. Prefix your own framework-level state keys the same way, and keep application keys unprefixed.
 
 ### Wiring with ToolContext
 

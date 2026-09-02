@@ -1,0 +1,9 @@
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local reference material, not part of the plugin
+agentcore-governance/
+poc*/

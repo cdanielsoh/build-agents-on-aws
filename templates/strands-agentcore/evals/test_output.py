@@ -1,4 +1,4 @@
-"""Trace-level evaluation — 5 trace evaluators + OutputEvaluator using OTEL spans."""
+"""Output-level evaluation — OutputEvaluator + all trace-level evaluators."""
 
 import sys
 from pathlib import Path
@@ -18,10 +18,17 @@ from strands_evals.evaluators import (  # noqa: E402
 )
 from strands_evals.mappers import StrandsInMemorySessionMapper  # noqa: E402
 
-from conftest import EvalBuilder, load_chats, load_rubrics, save_reports  # noqa: E402
+from conftest import (  # noqa: E402
+    EvalBuilder,
+    assert_all_evaluators_scored,
+    load_chats,
+    load_rubrics,
+    save_report,
+    strict_task,
+)
 
 
-def test_traces(config, memory_exporter):
+def test_output_quality(config, memory_exporter):
     cases = load_chats()
     assert cases, "No chat files found in evals/chats/"
 
@@ -59,15 +66,20 @@ def test_traces(config, memory_exporter):
     ]
 
     experiment = Experiment(cases=cases, evaluators=evaluators)
-    reports = experiment.run_evaluations(task_fn)
+    report = experiment.run_evaluations(strict_task(task_fn))
 
-    for report in reports:
-        report.display()
-        print()
+    report.display(include_actual_output=True)
+    print()
+    save_report("output", report)
 
-    save_reports("traces", evaluators, reports)
+    grouped = assert_all_evaluators_scored(report)
 
-    assert reports[0].scores, "Evaluator returned no scores"
+    # Gate on the rubric evaluator specifically. Raise this floor once you have a
+    # baseline — `> 0` only catches a total failure, not a regression.
+    rubric_scores = [s for name, ss in grouped.items() if "Output" in name for s in ss]
+    assert rubric_scores, "OutputEvaluator produced no scores"
+    avg = sum(rubric_scores) / len(rubric_scores)
+    assert avg > 0, f"Average output score {avg:.2f} is too low"
 
 
 if __name__ == "__main__":

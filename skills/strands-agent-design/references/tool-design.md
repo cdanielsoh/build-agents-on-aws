@@ -8,7 +8,7 @@ Tools shape agent behavior more than prompts do. Design tools for progressive di
 2. [Tool Results as Dynamic Prompts](#tool-results-as-dynamic-prompts)
 3. [Closure Factory Pattern](#closure-factory-pattern)
 4. [Anti-Patterns](#anti-patterns)
-5. [Human-in-the-Loop (Interrupt Gates)](#human-in-the-loop-interrupt-gates)
+5. [Human-in-the-Loop (Interventions)](#human-in-the-loop-interventions)
 6. [When NOT to Use Progressive Disclosure](#when-not-to-use-progressive-disclosure)
 
 ---
@@ -146,14 +146,17 @@ def get_account_info(tool_context: ToolContext) -> dict:
     return fetch_account(user_id)
 ```
 
-No custom context class, no wiring — the agent injects `ToolContext` at call time. The builder sets session-level data on `agent.state` after construction:
+No custom context class, no wiring — the agent injects `ToolContext` at call time. Pass
+session-level data as the agent's initial state rather than mutating it after construction:
 
 ```python
-def _init_agent_state(self, agent, token):
-    agent.state.set("user_id", resolve_actor_id(token))
+def _build_state(self, token) -> dict:
+    return {"user_id": resolve_actor_id(token)}
+
+# ... then Agent(..., state=self._build_state(token))
 ```
 
-See `scaffold/agent/tools/example_tool.py` and `scaffold/agent/core/builder.py`.
+See `templates/strands-agentcore/agent/tools/example_tool.py` and `templates/strands-agentcore/agent/core/builder.py`.
 
 ### Closures — Heavy External Dependencies
 
@@ -266,11 +269,11 @@ Never include identity-based parameters (user_id, account_id, tenant_id) in tool
 
 ---
 
-## Human-in-the-Loop (Interrupt Gates)
+## Human-in-the-Loop (Interventions)
 
 Some tools perform irreversible or high-impact actions — deleting data, processing payments, sending communications. Rather than trusting the agent unconditionally, gate these tools with a confirmation interrupt that pauses the agent and asks the user before proceeding.
 
-### When to Add an Interrupt Gate
+### When to Add a Confirmation Gate
 
 | Signal | Example |
 |--------|---------|
@@ -282,52 +285,76 @@ Some tools perform irreversible or high-impact actions — deleting data, proces
 
 Read-only tools (searches, lookups, summaries) should never require confirmation — that adds latency with no safety benefit.
 
-### Pattern: ApprovalHook
+### Pattern: InterventionHandler (Strands 1.51+)
 
-Strands' `HookProvider` + `event.interrupt()` pauses the agent mid-loop and returns control to the caller:
+Use `Agent(interventions=[...])` with an `InterventionHandler`. This supersedes the older
+"`HookProvider` that calls `event.interrupt()`" pattern — it is declarative, composable,
+and covers deny/guide/transform as well as confirm.
 
 ```python
-from typing import Any
-from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
+from strands import Agent
+from strands.interventions import Confirm, InterventionHandler, Proceed
+
+GATED = {"delete_files", "send_email", "process_refund"}
 
 
-class ApprovalHook(HookProvider):
-    def __init__(self, app_name: str, tools: list[str]) -> None:
-        self.app_name = app_name
-        self.tools = tools
+class ApprovalGate(InterventionHandler):
+    # `name` is required, and lifecycle methods must be overridden at CLASS level —
+    # assigning handler.before_tool_call = fn at runtime is not detected.
+    name = "approval-gate"
 
-    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
-        registry.add_callback(BeforeToolCallEvent, self.approve)
-
-    def approve(self, event: BeforeToolCallEvent) -> None:
-        if event.tool_use["name"] not in self.tools:
-            return
-
-        approval = event.interrupt(
-            f"{self.app_name}-approval",
-            reason={
-                "action": event.tool_use["name"],
-                "input": event.tool_use["input"],
-            },
+    def before_tool_call(self, event):
+        name = event.tool_use["name"]
+        if name not in GATED:
+            return Proceed()
+        return Confirm(
+            prompt=f"Allow {name}?",
+            reason={"action": name, "input": event.tool_use["input"]},
         )
-        if approval.lower() != "y":
-            event.cancel_tool = "User denied permission"
+
+
+agent = Agent(..., interventions=[ApprovalGate()])
 ```
 
-Wire it into the agent via `hooks=[ApprovalHook("myapp", ["delete_files", "send_email"])]`.
+### Actions
+
+| Action | Effect | Where |
+|---|---|---|
+| `Proceed(reason=None)` | Allow unchanged | any lifecycle method |
+| `Confirm(prompt, reason, response=None, evaluate=...)` | Request human approval | **`before_tool_call` only** |
+| `Deny(reason)` | Block; `reason` is shown to the model as the cancellation message | any |
+| `Guide(feedback)` | Let it run but steer the model with feedback | any |
+| `Transform(apply)` | Mutate the event in place | any |
+
+Lifecycle methods: `before_invocation`, `before_model_call`, `after_model_call`,
+`before_tool_call`, `after_tool_call`. Only overridden methods are called.
 
 ### Key Mechanics
 
-- **`event.interrupt(name, reason)`** — pauses the agent and returns the `reason` to the caller. The `name` identifies which hook interrupted (useful when multiple hooks exist).
-- **`event.cancel_tool`** — set to a string message to skip the tool. The agent sees the cancellation reason and can respond to the user accordingly.
-- **`result.stop_reason == "interrupt"`** — how the caller detects the agent is paused. `result.interrupts` contains the pending interrupts with their `id`, `name`, and `reason`.
-- **Resume with `agent(responses)`** — pass `interruptResponse` dicts to continue. The hook receives the response and decides whether to proceed or cancel.
+- **`Confirm` has two modes.** Without `response`, it breaks out of the agent loop and
+  pauses for an external resume — this is the interactive case. With `response` supplied,
+  the value is fed to the interrupt system preemptively and the agent never pauses, which
+  is what you want in tests and batch runs.
+- **Handlers may be `async`.** The registry awaits any override that returns an awaitable,
+  so you can await a database lookup, an authorization call, or a human approval prompt
+  before deciding. This is what makes `Deny` usable for real authorization.
+- **`evaluate`** on `Confirm` converts an arbitrary response into a bool, so you are not
+  locked into comparing against `"y"`.
 
 ### Design Considerations
 
-- **Keep the gate list explicit.** Check `event.tool_use["name"]` against a known set — don't gate everything by default, or the agent becomes unusable.
-- **Include context in `reason`.** Pass enough data for the user to make an informed decision (what will be deleted, how much will be charged, who will receive the email).
-- **The agent doesn't see the interrupt.** From the agent's perspective, the tool either executes or returns a cancellation message. Design the `cancel_tool` message so the agent can gracefully inform the user.
+- **Gate explicitly, or gate by assessed risk — not everything.** A hard-coded set is the
+  simple option. Strands 1.51 also ships an LLM-driven risk classifier, which gates on
+  what an action *does* rather than on a name you remembered to add to a list; it costs a
+  classification call per tool use, so reserve it for genuinely open tool surfaces.
+- **Include context in `reason`.** Enough for the user to decide: what gets deleted, how
+  much is charged, who receives the email.
+- **The agent doesn't see the pause.** From its perspective the tool either executes or
+  returns a cancellation message. Write the `Deny` reason so the agent can explain the
+  refusal to the user gracefully.
+- **Authorization belongs here too.** `before_tool_call` returning `Deny` is the natural
+  seam for policy checks — see the `deploy-on-agentcore` skill's `references/policy.md`
+  for enforcing the same decisions at the Gateway with Cedar.
 
 For how interrupts flow through AgentCore Runtime's streaming protocol (SSE events, `stopReason`, resume payloads), see the `deploy-on-agentcore` skill's `references/streaming-backend.md`.
 

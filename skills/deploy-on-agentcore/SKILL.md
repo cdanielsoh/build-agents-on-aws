@@ -11,11 +11,57 @@ description: >
   MCP Gateway, AgentCore Memory, BedrockAgentCoreApp, CfnRuntime, CfnGateway,
   or agent + Lambda + MCP patterns. Also trigger when users ask about
   multi-layer authorization in agent systems or token propagation chains.
+  Trigger on outbound authorization topics: AgentCore Identity, 2LO, 3LO,
+  two-legged or three-legged OAuth, client credentials vs authorization code,
+  USER_FEDERATION, M2M auth flow, token vault, workload identity,
+  OAuth2 credential provider, requires_access_token, requires_api_key,
+  CompleteResourceTokenAuth, GetResourceOauth2Token, per-user downstream
+  tokens, offloading a hand-rolled OAuth implementation, or connecting an
+  agent to ServiceNow / Okta / Google / GitHub / Salesforce on a user's behalf.
+  Trigger on authorization-policy topics: AgentCore Policy, policy engine,
+  Cedar policy, Cedar schema, permit/forbid statements, AgentCore::OAuthUser,
+  AgentCore::Gateway, tool-level authorization, fine-grained access control
+  for tools, LOG_ONLY vs ENFORCE, enforcementMode, policy generation,
+  LogOnlyDecisionFlips, or guardrails in policy.
+  Trigger on evaluation topics: AgentCore Evaluations, built-in evaluators,
+  Builtin.Helpfulness, Builtin.GoalSuccessRate, trajectory match evaluators,
+  online / on-demand / batch / dataset evaluation, custom evaluator,
+  code-based evaluator, LLM-as-a-judge for agents, evaluating a deployed
+  agent from traces, agent quality monitoring, DeepEval or AutoEval on
+  AgentCore, simulated scenarios, actor profile, or convert_strands_to_adot.
+  Trigger on observability topics: AgentCore Observability, ADOT,
+  aws-opentelemetry-distro, opentelemetry-instrument, unified vs split
+  telemetry, UNIFIED_TRACES_DESTINATION_ENABLED, CloudWatch Transaction
+  Search, aws/spans, otel-rt-logs, runtime-logs, gen_ai semantic conventions,
+  invoke agent / inference / execute tool spans, custom spans for agents,
+  or missing agent logs and traces.
+  Trigger on interceptor topics: gateway interceptor, REQUEST interceptor,
+  RESPONSE interceptor, interceptionPoints, passRequestHeaders, payloadFilter,
+  RESPONSE_BODY exclusion, transformedGatewayRequest,
+  transformedGatewayResponse, isStreamingResponse, interceptor short-circuit,
+  redacting a gateway response, or the interceptor 6 MB payload limit.
 ---
 
 # Building Agents on AWS Bedrock AgentCore
 
-> **Validated against `bedrock-agentcore` v1.4.6, `aws-cdk-lib` v2.243.0** (April 2026). If your version differs significantly, verify that the APIs and CDK constructs still apply.
+> **Validated against `bedrock-agentcore` 1.22.0 and `aws-cdk-lib` 2.267.0** (September 2026).
+> Grant types, tool shapes, and evaluator IDs were checked against the live
+> `bedrock-agentcore-control` API model and the AWS devguide. If your version differs, verify
+> before trusting these APIs.
+>
+> **CDK is fully current.** What AWS deprecated is the Python
+> `bedrock-agentcore-starter-toolkit`, not CDK — the `agentcore` CLI's own `deploy` command is
+> documented as deploying "via CDK", so CDK is the mechanism underneath, not the thing being
+> replaced. `aws_cdk.aws_bedrockagentcore` carries L1 constructs for every component in this
+> skill: `CfnRuntime`, `CfnRuntimeEndpoint`, `CfnGateway`, `CfnGatewayTarget`, `CfnMemory`,
+> `CfnPolicyEngine`, `CfnPolicy`, `CfnEvaluator`, `CfnOnlineEvaluationConfig`, `CfnDataset`,
+> `CfnOAuth2CredentialProvider`, `CfnApiKeyCredentialProvider`, `CfnTokenVault`,
+> `CfnWorkloadIdentity`, `CfnResourcePolicy`, `CfnBrowser`, `CfnCodeInterpreter`.
+>
+> Choose **CDK** when AgentCore resources live alongside existing infrastructure (VPC, Aurora,
+> Lambda, IAM) — the common enterprise case. Choose **`agentcore.json` + `agentcore deploy`**
+> when the agent project is self-contained. The `bedrock-agentcore` SDK is the runtime library
+> either way.
 
 This skill covers the full architecture for deploying AI agents on Bedrock AgentCore — from the agent container through MCP Gateway to Lambda-based tool servers, with OAuth authentication, security patterns, and CDK infrastructure.
 
@@ -52,9 +98,42 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Configure ADOT observability or IAM permissions     | `references/runtime-and-sessions.md` |
 | Create MCP Gateway with Lambda targets              | `references/gateway-and-mcp.md`      |
 | Write Lambda MCP server handlers                    | `references/gateway-and-mcp.md`      |
+| Front the MODEL path through the Gateway (inference targets) | `references/gateway-and-mcp.md` |
+| Meter per-user model spend and set dollar budgets   | `references/gateway-and-mcp.md`       |
+| Write a REQUEST interceptor (identity -> tool scope) | `references/security.md`             |
+| Write a RESPONSE interceptor (redaction, filtering) | `references/gateway-and-mcp.md`       |
+| Handle interceptors with response streaming         | `references/gateway-and-mcp.md`       |
+| Work around the interceptor 6 MB payload limit      | `references/gateway-and-mcp.md`       |
+| Publish an agent, MCP server, or skill for discovery | `references/agent-registry.md`       |
+| Search a registry / expose it as an MCP endpoint    | `references/agent-registry.md`        |
+| Decide registry topology and discovery boundaries   | `references/agent-registry.md`        |
+| Migrate off the bedrock-agentcore registry namespace | `references/agent-registry.md`       |
+| Rate-limit callers, tools, or tokens per minute     | `references/gateway-and-mcp.md`       |
+| Set PostgreSQL RLS scope without leaking it         | `references/security.md`             |
+| Test that a security control actually works         | `references/security.md`             |
+| Pin container images so deploys are not silent no-ops | `references/cdk-infrastructure.md` |
 | Implement row-level security / multi-layer auth     | `references/security.md`             |
 | Understand the token propagation chain              | `references/security.md`             |
 | Integrate AgentCore Memory for persistence          | `references/agentcore-memory.md`     |
+| Call a downstream API as the agent itself (2LO)     | `references/identity.md`             |
+| Call a downstream API as the end user (3LO)         | `references/identity.md`             |
+| Offload OAuth (PKCE, state, code exchange, refresh) | `references/identity.md`             |
+| Set up an OAuth2 credential provider / token vault  | `references/identity.md`             |
+| Store per-user downstream tokens                    | `references/identity.md`             |
+| Authorize individual tool calls with Cedar          | `references/policy.md`               |
+| Constrain tool arguments (refund ceilings, scoping) | `references/policy.md`               |
+| Shadow-test an authorization rule on real traffic   | `references/policy.md`               |
+| Generate Cedar policies from natural language       | `references/policy.md`               |
+| Score a deployed agent from its traces              | `references/evaluations.md`           |
+| Monitor production agent quality continuously       | `references/evaluations.md`           |
+| Run a batch regression audit over past sessions     | `references/evaluations.md`           |
+| Build a dataset of predefined or simulated scenarios | `references/evaluations.md`          |
+| Write a custom or code-based evaluator              | `references/evaluations.md`           |
+| Set up ADOT tracing, spans, and CloudWatch          | `references/observability.md`         |
+| Choose between unified and split telemetry          | `references/observability.md`         |
+| Debug missing logs, traces, or evaluation sessions  | `references/observability.md`         |
+| Add custom spans and attributes                     | `references/observability.md`         |
+| Instrument an agent hosted outside AgentCore        | `references/observability.md`         |
 | Write CDK stacks for Runtime, Gateway, Backend      | `references/cdk-infrastructure.md`   |
 | Understand AgentCore streaming event format          | `references/streaming-backend.md`    |
 | Implement the interrupt resume protocol              | `references/streaming-backend.md`    |
@@ -83,7 +162,12 @@ The **mutable headers pattern** is key: the builder creates a headers dict and p
 A single Gateway endpoint replaces N separate MCP server connections:
 - Lambda targets behind Gateway (pay-per-invocation, no idle cost)
 - Tool schemas declared in CDK with typed input schemas
-- **Interceptor Lambda** extracts Authorization header from request and forwards to targets
+- **Interceptors** (REQUEST and/or RESPONSE, at most one of each, Lambda only). The REQUEST
+  interceptor is the only way identity reaches a Lambda target. Two things bite: the payload
+  shape differs by target type (`mcp` = parsed JSON vs `http` = base64, with inference targets
+  using the `http` shape), and after a REQUEST short-circuit the RESPONSE interceptor **still
+  runs on MCP targets but does not on HTTP targets**. Under streaming, the RESPONSE interceptor
+  fires once per event and only the first may change headers or status code
 - OAuth validation at Gateway level via `CUSTOM_JWT` with Cognito OIDC discovery URL
 
 ### 4. Lambda MCP Servers
@@ -104,20 +188,133 @@ Both use FastMCP for tool definitions and a handler that translates Gateway invo
 
 **Token Propagation Chain**: OAuth token flows through the entire system — Client → Backend → Runtime → Gateway → Lambda → Database — validated independently at each hop.
 
-### 6. AgentCore Memory
+### 6. Identity — Outbound Auth (2LO vs 3LO)
+
+**Inbound** auth answers "who is calling my agent" (`CUSTOM_JWT` on Runtime/Gateway).
+**Outbound** auth answers "how does my agent authenticate to a downstream API" — that is
+AgentCore Identity, and it is a separate concern.
+
+| | 2LO | 3LO |
+|---|---|---|
+| Grant | `CLIENT_CREDENTIALS` / `auth_flow="M2M"` | `AUTHORIZATION_CODE` / `auth_flow="USER_FEDERATION"` |
+| Acts as | The application | The end user |
+| Token scope | One per workload | One **per user**, keyed by inbound JWT `sub` |
+| Downstream ACLs | Service account's | The real user's |
+
+Use 3LO whenever the downstream system has per-user permissions you must respect — a service
+account sees everything and misattributes every action. A third grant, `TOKEN_EXCHANGE`,
+swaps the inbound token for a downstream one with no interactive consent.
+
+Adopting this deletes your PKCE pair generation, `state` store, authorize-URL builder,
+code-exchange POST, token persistence, and refresh logic. Maximum offload is a Gateway
+MCP-server target with `grantType: AUTHORIZATION_CODE` — the Gateway injects the per-user
+token and the MCP server holds no credentials at all. **Gateway does not manage 3LO for
+Lambda targets**; those use the `@requires_access_token` decorator in-process instead.
+
+See `references/identity.md` — including the gotchas that fail confusingly (service-linked
+workload identities, `userToken` vs `userId` session binding, the required MCP protocol
+version, and FastMCP stripping the `authorization` header).
+
+### 7. Policy — Cedar Authorization on Tool Calls
+
+A **policy engine** attached to a Gateway evaluates Cedar policies on every `tools/call`,
+against a schema **auto-generated from the Gateway's tool manifest**. Cedar is default-deny
+with forbid-wins. Each tool becomes an action (`<target>___<tool>`); the principal is
+`AgentCore::OAuthUser` (JWT claims exposed as **tags**) or `AgentCore::IamEntity`; the only
+context is `context.input` — the tool's arguments. That makes argument-level rules expressible
+("refunds ≤ $500", "actorId must equal the caller's `sub`"), and anything needing time of day
+or source IP not expressible.
+
+**Two separate settings share the value `LOG_ONLY`,** and confusing them is the likeliest way
+to think you are enforcing when you are not: engine-level `policyEngineConfiguration.mode`
+(`ENFORCE`|`LOG_ONLY`) governs the whole engine and **takes precedence**, while per-policy
+`enforcementMode` (`ACTIVE`|`LOG_ONLY`) shadow-tests one rule inside an enforcing engine.
+Promote when the `LogOnlyDecisionFlips` metric holds at zero.
+
+Two Cedar limits shape your design up front: **no string concatenation** (so you cannot build
+`"/actors/" + sub` — the IdP must issue a claim already holding the full value) and **no action
+wildcards** (so adding a tool to a target is also a policy change; under default-deny the new
+tool is denied until listed). See `references/policy.md`.
+
+### 8. Evaluations — Managed Scoring from Traces
+
+Managed LLM-as-judge scoring over OTEL traces. Works for agents on AgentCore Runtime **and
+anywhere else** — the input is telemetry, not a runtime dependency. **This is distinct from
+`strands-evals`**, which is the pre-deploy pytest suite; you want both, and
+`bedrock_agentcore.evaluation.convert_strands_to_adot` bridges between them.
+
+Four ways to run it: **online** (sample live traffic continuously), **on-demand** (score
+specific span/trace IDs — the cheapest loop when iterating on an evaluator), **batch** (async
+job over a CloudWatch Logs window; the service discovers sessions itself), and **dataset**
+(replay predefined turns, or let an LLM actor drive simulated ones).
+
+Built-in evaluators come in session, trace, and tool levels — the level decides what the judge
+actually sees, which is the first thing to check when a score looks wrong. Note three
+trajectory variants (`ExactOrderMatch`, `InOrderMatch`, `AnyOrderMatch`): exact-order will fail
+an agent that did the right thing plus one extra lookup, so pick the loosest that still encodes
+the requirement. Prefer a **code-based** custom evaluator whenever the property is decidable —
+an LLM judge for "is this valid JSON" adds cost and variance to a question `json.loads` answers
+exactly.
+
+**ADOT instrumentation is a hard prerequisite** — no traces, no evaluations. Ground truth is
+optional and missing fields **fall back to reference-free scoring rather than erroring**, so a
+mistyped field name yields a plausible-but-different score instead of a failure. See
+`references/evaluations.md`.
+
+### 9. Agent Registry — Publish and Discover
+
+**GA under the `agent-registry` namespace; the preview `bedrock-agentcore` namespace is
+discontinued 2026-09-17.** Records are typed (`AGENT`, `MCP`, `SKILL`, `CUSTOM`), carry exactly
+one protocol descriptor validated against the official schema (MCP `server.json`, A2A agent
+card, AgentSkills), and move through DRAFT → PENDING_APPROVAL → APPROVED with deprecation as a
+**terminal, irreversible** state — to hide a record temporarily, reject it instead.
+
+Discovery is hybrid semantic + keyword search, and `InvokeRegistryMcp` exposes the registry
+*as an MCP endpoint*, so "find me a tool for X" becomes a tool call rather than registry-specific
+SDK code.
+
+**Topology is forced, not stylistic:** search takes exactly one registry per call, filters cover
+only `name`/`recordType`/`recordVersion`, and inbound authorization is per registry with no
+per-record policy. One shared registry therefore lets every authenticated consumer search
+everything, and scoping degrades to convention. One registry per boundary makes it an
+authentication boundary instead. Mirror it in your gateway topology so the same rule is enforced
+in discovery and invocation.
+
+Also note authorization type and JWT discovery URL are **immutable after creation**, control-plane
+APIs always require IAM regardless of the registry's setting, and discovery is eventually
+consistent (seconds, sometimes minutes) while control-plane reads are not. See
+`references/agent-registry.md`.
+
+### 10. AgentCore Memory
 
 Three strategy types: User Preferences (cross-session), Semantic Memory (extracted facts), Conversation Summaries (per-session). Namespace design with `{actorId}` from Cognito JWT `sub` claim (extracted via base64, no PyJWT needed). **Must use `batch_size=1`** (the default) because containers are hard-killed without SIGTERM — larger batches risk data loss.
 
-### 7. Observability (ADOT)
+### 11. Observability (ADOT)
 
-AgentCore Runtime includes an ADOT sidecar for traces and metrics. Setup:
-1. Add `strands-agents[otel]` and `aws-opentelemetry-distro` to requirements
-2. Use `CMD ["opentelemetry-instrument", "python", "app.py"]` in Dockerfile
-3. **Do NOT set OTEL env vars** — the sidecar configures these for hosted agents
+AgentCore Runtime includes an ADOT sidecar. Setup is four steps, and the fourth is the one
+people miss:
 
-Critical IAM: `logs:DescribeLogGroups` on `log-group:*` is required or no `[runtime-logs]` streams are created.
+1. Add `strands-agents[otel]` and `aws-opentelemetry-distro>=0.18` to requirements
+2. Use `CMD ["opentelemetry-instrument", "python", "app.py"]` in the Dockerfile
+3. **Do NOT set `OTEL_*` env vars** — the sidecar configures them for hosted agents.
+   (This inverts for agents hosted outside Runtime, where you must set them yourself.)
+4. **Enable CloudWatch Transaction Search** — an account/region setting outside your stack,
+   required by AgentCore Evaluations in both delivery modes
 
-### 8. CDK Infrastructure
+**Unified vs split telemetry** decides where conversation content lives. Unified keeps it on
+the span in the agent's own log group; split moves it into separate event records in
+`otel-rt-logs` while spans go to the shared `aws/spans`. Agents created on or after
+2026-07-20 default to unified; toggle with `UNIFIED_TRACES_DESTINATION_ENABLED`. **ADOT older
+than 0.18.0 silently falls back to split** regardless of that variable.
+
+Two failure modes are silent and cost real time: `logs:DescribeLogGroups` scoped to anything
+narrower than `log-group:*` means **no `[runtime-logs]` streams are created at all**, and
+missing Transaction Search means **Evaluations finds no sessions**. Neither raises an error.
+
+Session grouping runs on `gen_ai.conversation.id` and `session.id` — the same attributes the
+eval suite injects via `trace_attributes`. See `references/observability.md`.
+
+### 12. CDK Infrastructure
 
 Two agent-specific stacks:
 - **MCPGatewayStack**: Gateway + interceptor + Lambda targets + tool schemas
@@ -125,7 +322,7 @@ Two agent-specific stacks:
 
 Plus minimal Cognito User Pool if no OIDC provider exists.
 
-### 9. Streaming Protocol & Interrupts
+### 13. Streaming Protocol & Interrupts
 
 AgentCore streams responses as SSE with nested JSON events (`contentBlockDelta`, `messageStop`, etc.). Key behaviors: `stopReason=end_turn` means normal completion; `stopReason=interrupt` means HITL pause — caller must collect user response and resume with `interrupt_responses` payload. Session IDs must be minimum 33 characters and consistent across the entire conversation including interrupt resumptions.
 
@@ -137,5 +334,10 @@ For a new agent project, work through the references in this order:
 2. **`references/gateway-and-mcp.md`** — Create MCP Gateway and Lambda MCP servers
 3. **`references/runtime-and-sessions.md`** — Build the agent container with singleton session
 4. **`references/security.md`** — Add multi-layer auth and token propagation
-5. **`references/agentcore-memory.md`** — Configure persistent conversation memory
-6. **`references/streaming-backend.md`** — Understand the streaming event format and interrupt protocol
+5. **`references/identity.md`** — Wire outbound auth (2LO/3LO) to downstream APIs
+6. **`references/policy.md`** — Add Cedar authorization on tool calls (start in LOG_ONLY)
+7. **`references/agentcore-memory.md`** — Configure persistent conversation memory
+8. **`references/agent-registry.md`** — Publish agents/tools/skills and set discovery boundaries
+9. **`references/streaming-backend.md`** — Understand the streaming event format and interrupt protocol
+10. **`references/observability.md`** — Turn on tracing properly; it gates everything below
+11. **`references/evaluations.md`** — Score the deployed agent from its traces, in batch then online

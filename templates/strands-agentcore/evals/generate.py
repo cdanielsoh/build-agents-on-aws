@@ -14,8 +14,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "agent"))
 
-from strands_evals.generators import ExperimentGenerator  # noqa: E402
 from strands_evals.evaluators import OutputEvaluator, TrajectoryEvaluator  # noqa: E402
+from strands_evals.generators import ExperimentGenerator  # noqa: E402
 
 EVALS_DIR = Path(__file__).resolve().parent
 EVALUATOR_MAP = {

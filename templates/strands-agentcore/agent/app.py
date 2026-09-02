@@ -10,8 +10,8 @@ from contextlib import asynccontextmanager
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
-from core.config import AgentConfig
 from core.builder import SessionBuilder
+from core.config import AgentConfig
 from core.session import Session
 
 logger = logging.getLogger(__name__)

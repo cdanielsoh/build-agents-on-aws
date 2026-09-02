@@ -2,6 +2,14 @@
 
 Evaluate agents across four dimensions: output quality, tool call sequences, OTEL traces, and multi-turn simulated conversations.
 
+> **Validated against `strands-agents-evals` 1.2.0** (September 2026). Every trap called out
+> below was hit while running the bundled suite — they are not hypothetical.
+>
+> For the *managed* alternative — LLM-as-judge scoring over OTEL traces, run by AWS with
+> built-in and custom evaluators, online/batch/dataset modes — see AgentCore Evaluations in
+> the `deploy-on-agentcore` skill. The two are complementary: `strands-evals` is your
+> pre-deploy test suite, AgentCore Evaluations watches production traffic.
+
 ## Table of Contents
 
 1. [Package and Imports](#package-and-imports)
@@ -81,7 +89,7 @@ Store cases in `evals/chats/*.json`:
 
 ### Loading Cases
 
-The scaffold's `conftest.py` provides auto-discovery:
+The template's `conftest.py` provides auto-discovery:
 
 ```python
 def load_chats(pattern="*.json") -> list[Case]:
@@ -102,21 +110,71 @@ def load_chats(pattern="*.json") -> list[Case]:
 
 ### Running an Experiment
 
-```python
-experiment = Experiment(cases=cases, evaluators=[OutputEvaluator(rubric=rubric)])
-reports = experiment.run_evaluations(task_fn)
+> **Changed in `strands-agents-evals` 1.2:** `run_evaluations()` returns **one**
+> `EvaluationReport` covering every (case, evaluator) pair. It used to return a list with
+> one report per evaluator. Code written against the old shape fails with
+> `AttributeError: 'tuple' object has no attribute 'display'`.
 
-for report in reports:
-    report.display()  # use display() (static), NOT run_display() (interactive)
+```python
+experiment = Experiment(cases=cases, evaluators=[OutputEvaluator(rubric=rubric), ...])
+report = experiment.run_evaluations(strict_task(task_fn))
+
+report.display(include_actual_output=True)  # static; NOT run_display() (interactive)
+report.to_file("evals/reports/output.json")  # serializes itself — no manual json.dump
 ```
 
 The `task_fn` receives a `Case` and returns `{"output": str, "trajectory": ...}`.
+
+`report.scores` is **flat across all evaluators**, in the same order as `report.cases`.
+Each row in `report.cases` carries an `evaluator` field. Group before asserting, or a
+regression in one evaluator hides behind a win in another:
+
+```python
+def scores_by_evaluator(report) -> dict[str, list[float]]:
+    grouped = {}
+    for row, score in zip(report.cases, report.scores, strict=False):
+        grouped.setdefault(str(row.get("evaluator", "unknown")), []).append(score)
+    return grouped
+```
+
+### Trap: Experiment swallows task exceptions
+
+`run_evaluations` catches whatever the task raises and records the case as `0.0`. That is
+reasonable for a flaky model call, but it makes a genuine bug — a renamed SDK field, a
+malformed fixture — indistinguishable from a badly-performing agent. The symptom is a suite
+that reports **"1 passed" in 0.04s with every score at 0.00**.
+
+Always wrap the task:
+
+```python
+import functools, traceback
+
+def strict_task(fn):
+    @functools.wraps(fn)
+    def wrapper(case):
+        try:
+            return fn(case)
+        except Exception:
+            print(f"!!! task failed for {case.name!r} — a bug, not a low score")
+            traceback.print_exc()
+            raise
+    return wrapper
+```
+
+### Trap: tool-accuracy evaluators and no-tool cases
+
+`ToolSelectionAccuracyEvaluator` and `ToolParameterAccuracyEvaluator` score `0.0` on a case
+that makes no tool call — **even when making no call was correct**. A suite that mixes
+"should call `get_account_info`" with "should answer without tools" therefore shows a
+depressed tool-accuracy mean that is not a regression. Either split those cases into their
+own `Experiment` without the tool evaluators, or average only over cases whose
+`expected_trajectory` is non-empty.
 
 ---
 
 ## EvalBuilder
 
-The scaffold's key testing pattern: subclass `SessionBuilder` to inject `trace_attributes` for OTEL-based evaluators without affecting production code.
+The template's key testing pattern: subclass `SessionBuilder` to inject `trace_attributes` for OTEL-based evaluators without affecting production code.
 
 ```python
 class EvalBuilder(SessionBuilder):
@@ -147,7 +205,7 @@ session = builder.build()
 response = session.invoke(case.input)
 ```
 
-See `scaffold/evals/conftest.py` for the full implementation with fixtures.
+See `templates/strands-agentcore/evals/conftest.py` for the full implementation with fixtures.
 
 ---
 
@@ -198,10 +256,10 @@ def test_output_quality(config, memory_exporter):
         for r in load_rubrics("output")
     ]
     experiment = Experiment(cases=cases, evaluators=evaluators)
-    reports = experiment.run_evaluations(task_fn)
+    report = experiment.run_evaluations(strict_task(task_fn))
 ```
 
-See `scaffold/evals/test_output.py` for the complete implementation.
+See `templates/strands-agentcore/evals/test_output.py` for the complete implementation.
 
 ---
 
@@ -231,7 +289,7 @@ return TaskOutput(output=str(response), trajectory=trajectory_names)
 return {"output": str(response), "trajectory": mapped}
 ```
 
-See `scaffold/evals/test_trajectory.py` for the complete dual-experiment pattern.
+See `templates/strands-agentcore/evals/test_trajectory.py` for the complete dual-experiment pattern.
 
 ---
 
@@ -272,7 +330,7 @@ mapper = StrandsInMemorySessionMapper()
 mapped = mapper.map_to_session(spans, session_id=case.session_id)
 ```
 
-See `scaffold/evals/test_traces.py` for the complete implementation.
+See `templates/strands-agentcore/evals/test_traces.py` for the complete implementation.
 
 ---
 
@@ -286,36 +344,49 @@ Store personas in `evals/personas/`:
 
 ```yaml
 name: impatient_expert
+
+# ActorProfile.traits must be a MAPPING (dict[str, Any]). A YAML list raises a pydantic
+# ValidationError inside the task, which Experiment converts to a 0.0 score — see the
+# "Experiment swallows task exceptions" trap above. Keys are free-form.
 traits:
   expertise_level: expert
   communication_style: terse
   patience_level: low
   detail_preference: minimal
+
 context: >
   An experienced power user who expects quick, accurate answers.
   Gets frustrated with unnecessary explanations.
+
 goal: "Get order status information quickly without extra detail"
-initial_message: "order status, last order"
 max_turns: 4
 ```
 
 ### The Persona x Case Matrix
 
-Run every persona against every test case for coverage:
+Run every persona against every test case for coverage. **The case supplies the opening
+message; the persona only shapes behaviour from turn 2 onward.**
 
 ```python
 personas = load_personas()
 cases = load_chats()
 
-sim_cases = []
+sim_cases, persona_by_case = [], {}
 for persona in personas:
     for case in cases:
+        name = f"{persona['name']}-{case.name}"
         sim_cases.append(Case(
-            name=f"{persona['name']}-{case.name}",
-            input=persona.get("initial_message", case.input),
+            name=name,
+            input=case.input,   # NOT persona["initial_message"] — see below
             metadata={"task_description": case.metadata.get("task_description", case.input)},
         ))
+        persona_by_case[name] = persona
 ```
+
+If the persona supplies `input`, every case in that persona's row starts with the same
+message and the case dimension collapses — N cases become one conversation repeated N
+times, with matching scores that read as agreement rather than as a bug. Drop
+`initial_message` from persona files entirely so it cannot be reintroduced by accident.
 
 ### The Simulation Loop
 
@@ -336,10 +407,19 @@ user_message = case.input
 while user_sim.has_next():
     agent_response = agent(user_message)
     user_result = user_sim.act(str(agent_response))
-    user_message = str(user_result.structured_output.message)
+
+    reply = user_result.structured_output.message
+    if not reply:          # actor returns None once its goal is met
+        break
+    user_message = str(reply)
 ```
 
-See `scaffold/evals/test_simulation.py` for the complete implementation with span collection.
+**Do not `str()` the reply before checking it.** The actor sets `message=None` when it
+considers the goal achieved; `str(None)` appends a literal `"None"` as the next user turn,
+which the agent then dutifully answers — inflating turn counts and polluting the trajectory
+the evaluators grade.
+
+See `templates/strands-agentcore/evals/test_simulation.py` for the complete implementation with span collection.
 
 ---
 
@@ -397,7 +477,7 @@ python evals/generate.py                          # all scenarios
 python evals/generate.py evals/scenarios/foo.yaml  # specific file
 ```
 
-Generated cases are saved to `evals/chats/generated_<name>.json` in the same format as hand-written cases. See `scaffold/evals/generate.py`.
+Generated cases are saved to `evals/chats/generated_<name>.json` in the same format as hand-written cases. See `templates/strands-agentcore/evals/generate.py`.
 
 ### Report Persistence
 
