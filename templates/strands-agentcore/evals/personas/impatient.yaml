@@ -1,0 +1,21 @@
+name: impatient-power-user
+
+# ActorProfile.actor_goal — specific, actionable, written from the actor's perspective.
+goal: Confirm my account tier and the date I joined, in as few messages as possible.
+
+# ActorProfile.traits is a MAPPING (dict[str, Any]), not a list. A list raises a
+# pydantic ValidationError, and Experiment swallows task_fn exceptions into 0.0
+# scores — so the symptom is a suite that "runs" in milliseconds with every score
+# zeroed rather than an error. Keys are free-form; the simulator reads them as
+# characteristics of the person it is playing.
+traits:
+  tone: Terse. Writes in fragments rather than full sentences.
+  patience: Low. Pushes back if asked for information the agent should already have.
+  persistence: Asks one related follow-up once the first answer lands.
+  expertise: Comfortable with the product; does not need hand-holding.
+
+context: >
+  A long-time premium customer checking their tier before deciding whether to renew.
+  Already signed in, so any request for an account ID is a failure on the agent's part.
+
+max_turns: 4

@@ -146,6 +146,16 @@ class AgentRuntimeStack(Stack):
         ))
 
         # CloudWatch Logs
+        #
+        # logs:DescribeLogGroups MUST be on log-group:* — not a narrower ARN. Scope it
+        # down and no [runtime-logs] streams are created at all: the agent runs fine and
+        # produces no logs, with nothing anywhere indicating why. This is the single
+        # most expensive silent failure in an AgentCore deployment.
+        # See references/observability.md.
+        runtime_role.add_to_policy(iam.PolicyStatement(
+            actions=["logs:DescribeLogGroups"],
+            resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:*"],
+        ))
         runtime_role.add_to_policy(iam.PolicyStatement(
             actions=["logs:CreateLogGroup", "logs:DescribeLogStreams"],
             resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/bedrock*"],
@@ -153,6 +163,19 @@ class AgentRuntimeStack(Stack):
         runtime_role.add_to_policy(iam.PolicyStatement(
             actions=["logs:CreateLogStream", "logs:PutLogEvents"],
             resources=[f"arn:aws:logs:{self.region}:{self.account}:log-group:/aws/bedrock*:log-stream:*"],
+        ))
+
+        # X-Ray + metrics, for traces and the observability dashboard.
+        runtime_role.add_to_policy(iam.PolicyStatement(
+            actions=[
+                "xray:PutTraceSegments", "xray:PutTelemetryRecords",
+                "xray:GetSamplingRules", "xray:GetSamplingTargets",
+            ],
+            resources=["*"],
+        ))
+        runtime_role.add_to_policy(iam.PolicyStatement(
+            actions=["cloudwatch:PutMetricData"],
+            resources=["*"],
         ))
 
         # ========== AgentCore Memory ==========
@@ -197,11 +220,20 @@ class AgentRuntimeStack(Stack):
             "AGENTCORE_MEMORY_ENABLED": "true",
         }
 
+        # NEVER a mutable tag here — see "Image tags must be content-addressed" below.
+        # Pass the tag in from a build step that hashes what actually goes in the image.
+        image_tag = self.node.try_get_context("image_tag")
+        if not image_tag or image_tag == "latest":
+            raise ValueError(
+                "image_tag context value is required and must not be 'latest'. "
+                "Pass -c image_tag=$(./scripts/image_tag.sh)."
+            )
+
         runtime_config = {
             "agent_runtime_name": "my_agent_runtime",
             "agent_runtime_artifact": bedrockagentcore.CfnRuntime.AgentRuntimeArtifactProperty(
                 container_configuration=bedrockagentcore.CfnRuntime.ContainerConfigurationProperty(
-                    container_uri=f"{agent_repository.repository_uri}:latest"
+                    container_uri=f"{agent_repository.repository_uri}:{image_tag}"
                 )
             ),
             "network_configuration": bedrockagentcore.CfnRuntime.NetworkConfigurationProperty(
@@ -679,3 +711,76 @@ runtime_role.add_to_policy(iam.PolicyStatement(
     resources=[f"arn:aws:ssm:{self.region}:{self.account}:parameter/mcp/endpoints/*"],
 ))
 ```
+
+---
+
+## Image Tags Must Be Content-Addressed
+
+`:latest` — or any fixed tag — makes a deploy that changes nothing while reporting success.
+
+The failure is worth understanding precisely, because every individual step looks fine:
+
+1. The stack builds the container URI as `{repo}:{fixed-tag}`.
+2. With the tag fixed, that string is **byte-identical on every deploy**.
+3. CloudFormation diffs the template, finds no change, and reports `(no changes)`.
+4. Your freshly built images sit in ECR, unadopted.
+5. **AgentCore pins a runtime to the image digest it resolved at create time**, so
+   re-pushing the same tag does not roll it either.
+
+The result is a green build, a green deploy, and a live runtime still serving last week's
+code. Nothing short of a template change will move it.
+
+### The fix: hash what goes into the image
+
+```bash
+#!/usr/bin/env bash
+# Print a content-addressed image tag for the paths this Dockerfile copies.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+case "${1:-agent}" in
+  agent) PATHS=(agent packages) ;;
+  bff)   PATHS=(services/bff packages) ;;
+  *) echo "usage: $0 [agent|bff]" >&2; exit 2 ;;
+esac
+
+{
+  # Tracked + staged + untracked-but-not-ignored, deduplicated and sorted so the
+  # order cannot vary across machines or git versions.
+  { git ls-files -- "${PATHS[@]}"
+    git ls-files --others --exclude-standard -- "${PATHS[@]}"; } | sort -u |
+  while IFS= read -r file; do
+    [ -f "$file" ] || continue     # in the index but deleted from the worktree
+    printf '%s\n' "$file"          # hash the path too, so a rename moves the tag
+    cat -- "$file"
+  done
+} | shasum -a 256 | cut -c1-12
+```
+
+```bash
+cdk deploy -c image_tag="$(./scripts/image_tag.sh)"
+```
+
+Three properties that matter, each learned by getting it wrong:
+
+**Hash file *content*, not git metadata.** Mixing `git rev-parse HEAD:<path>` (a tree object)
+with `git diff` output (patch text) makes the tag depend on the *shape of history* rather than
+on the bytes going into the image. Building with uncommitted edits produces one tag; committing
+those same edits produces another — identical content, two tags. It surfaces right after a
+merge, when the deployed image holds exactly `main`'s code and the staleness check still fires.
+A staleness check that fires on a no-op trains you to ignore it, which is how the `:latest` bug
+survives in the first place.
+
+**Scope the hash per image.** Hashing all of `services/` for two images couples them: editing
+the BFF changes the agent's tag and demands a rebuild of something it cannot possibly affect.
+Hash exactly the subtrees that image's Dockerfile copies; shared packages count for both.
+
+**Include the file list, not just the bytes.** A rename then moves the tag even when content is
+unchanged, and a deletion moves it because the list shrinks.
+
+### Assert it in a deployment test
+
+Two checks worth having, because this class of bug is invisible at deploy time:
+
+- No runtime is on a mutable tag.
+- Every pinned image digest actually exists in ECR.

@@ -52,19 +52,17 @@ class MetaToolingBuilder(SessionBuilder):
             create_use_tool(self._registry),
         ]
 
-    def _build_agent(self, tools: list, hooks: list, session_manager=None) -> Agent:
-        """Build agent with catalog-augmented system prompt.
+    def _build_system_prompt(self) -> str:
+        """Base prompt plus the category catalog and the rules that make deferral work.
 
-        Appends the category catalog and meta-tooling rules to the base
-        system prompt loaded from the .md file.
+        The catalog is Level 1 disclosure: enough for the model to pick a category,
+        not enough to call a tool. The rules exist because a model that has never
+        seen the schemas will otherwise invent tool names.
         """
-        base_prompt = build_system_prompt()
-        catalog = self._registry.get_catalog()
-
-        system_prompt = (
-            f"{base_prompt}\n\n"
+        return (
+            f"{build_system_prompt()}\n\n"
             f"## Tool Categories\n"
-            f"{catalog}\n\n"
+            f"{self._registry.get_catalog()}\n\n"
             f"## Rules\n"
             f"- You MUST call get_tool_info with a category name BEFORE calling use_tool.\n"
             f"- You do NOT know the tool names or parameter names until get_tool_info tells you.\n"
@@ -73,17 +71,30 @@ class MetaToolingBuilder(SessionBuilder):
             f"tool name, parameter names, and values from the schema.\n"
         )
 
-        conversation_mgr = self._build_conversation_manager()
+    def _build_agent(
+        self,
+        tools: list,
+        plugins: list | None = None,
+        hooks: list | None = None,
+        interventions: list | None = None,
+        session_manager=None,
+        state: dict | None = None,
+    ) -> Agent:
+        """Same assembly as SessionBuilder, with the catalog-augmented system prompt."""
         kwargs: dict = {
             "model": self._build_model(),
             "tools": tools,
-            "system_prompt": system_prompt,
+            "system_prompt": self._build_system_prompt(),
+            "conversation_manager": self._build_conversation_manager(),
+            "state": state or {},
             "callback_handler": None,
         }
+        if plugins:
+            kwargs["plugins"] = plugins
         if hooks:
             kwargs["hooks"] = hooks
+        if interventions:
+            kwargs["interventions"] = interventions
         if session_manager:
             kwargs["session_manager"] = session_manager
-        if conversation_mgr:
-            kwargs["conversation_manager"] = conversation_mgr
         return Agent(**kwargs)

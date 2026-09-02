@@ -1,5 +1,15 @@
 # Meta-Tooling: Schema-Level Progressive Disclosure
 
+> **Check for a managed option first.** If your tools live behind an AgentCore Gateway, enabling
+> semantic search there gives you `x_amz_bedrock_agentcore_search` — a built-in tool that finds
+> tools by natural-language query, with no custom registry, no meta-tool prompt engineering, and
+> no way for the catalogue to drift from what the gateway actually exposes. See the
+> `deploy-on-agentcore` skill's `references/gateway-and-mcp.md`.
+>
+> This pattern still earns its place for **local** tools, **mixed local/MCP** fleets, when you
+> need control over the disclosure levels, or when your region does not support gateway semantic
+> search. Reach for it deliberately rather than by default.
+
 > **Experimental.** Language models are trained to see tool descriptions upfront in the prompt. Meta-tooling breaks this assumption by deferring tool schemas until the agent requests them. This pattern only works reliably with capable models (Sonnet, Opus). With less capable models (Haiku), accuracy can drop significantly — especially on multi-step reasoning tasks (observed 0.5 on complex cases in evaluation). **Harsh evaluation is required before production use.** Always run trajectory and output evaluations (see [testing-with-evals.md](testing-with-evals.md)) to validate that deferred schemas don't degrade tool selection accuracy for your specific use case.
 
 ## Table of Contents

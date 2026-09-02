@@ -1,4 +1,4 @@
-"""Output-level evaluation — OutputEvaluator + all trace-level evaluators."""
+"""Trace-level evaluation — 5 trace evaluators + OutputEvaluator using OTEL spans."""
 
 import sys
 from pathlib import Path
@@ -18,10 +18,17 @@ from strands_evals.evaluators import (  # noqa: E402
 )
 from strands_evals.mappers import StrandsInMemorySessionMapper  # noqa: E402
 
-from conftest import EvalBuilder, load_chats, load_rubrics, save_reports  # noqa: E402
+from conftest import (  # noqa: E402
+    EvalBuilder,
+    assert_all_evaluators_scored,
+    load_chats,
+    load_rubrics,
+    save_report,
+    strict_task,
+)
 
 
-def test_output_quality(config, memory_exporter):
+def test_traces(config, memory_exporter):
     cases = load_chats()
     assert cases, "No chat files found in evals/chats/"
 
@@ -59,16 +66,13 @@ def test_output_quality(config, memory_exporter):
     ]
 
     experiment = Experiment(cases=cases, evaluators=evaluators)
-    reports = experiment.run_evaluations(task_fn)
+    report = experiment.run_evaluations(strict_task(task_fn))
 
-    for report in reports:
-        report.display()
-        print()
+    report.display(include_actual_trajectory=True)
+    print()
+    save_report("traces", report)
 
-    save_reports("output", evaluators, reports)
-
-    avg = sum(reports[0].scores) / len(reports[0].scores)
-    assert avg > 0, f"Average output score {avg:.2f} is too low"
+    assert_all_evaluators_scored(report)
 
 
 if __name__ == "__main__":

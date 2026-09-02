@@ -2,10 +2,13 @@
 
 ## Table of Contents
 1. [MCP Gateway Architecture](#mcp-gateway-architecture)
-2. [Interceptor Lambda](#interceptor-lambda)
-3. [Lambda MCP Server Handler](#lambda-mcp-server-handler)
-4. [Direct vs Adapter Pattern](#direct-vs-adapter-pattern)
-5. [MCP Client in the Agent](#mcp-client-in-the-agent)
+2. [Target Types: Not Just Tools](#target-types-not-just-tools)
+3. [Interceptors](#interceptors)
+4. [Native Tool Search](#native-tool-search-x_amz_bedrock_agentcore_search)
+5. [Rate Limits](#rate-limits)
+6. [Lambda MCP Server Handler](#lambda-mcp-server-handler)
+7. [Direct vs Adapter Pattern](#direct-vs-adapter-pattern)
+8. [MCP Client in the Agent](#mcp-client-in-the-agent)
 
 ---
 
@@ -19,7 +22,8 @@ Agent
   v
 MCP Gateway (single endpoint)
   |-- OAuth validation (CUSTOM_JWT)
-  |-- Interceptor Lambda (header forwarding)
+  |-- REQUEST interceptor  (identity -> trusted scope)
+  |-- RESPONSE interceptor (redaction / filtering)
   |
   +-- Target A: Lambda MCP (user-data tools)
   +-- Target B: Lambda MCP (catalog tools)
@@ -38,7 +42,7 @@ Gateway is the recommended pattern for most use cases. Direct connections make s
 ### Gateway Components
 
 1. **Gateway Resource** — CfnGateway with `CUSTOM_JWT` authorizer pointing to Cognito
-2. **Interceptor Lambda** — Extracts Authorization header, forwards to targets
+2. **Interceptors** — REQUEST and/or RESPONSE Lambdas. The REQUEST interceptor is the only way identity reaches a Lambda target; the RESPONSE interceptor is where redaction belongs
 3. **Lambda Targets** — Each target is a Lambda function with tool schema definitions
 4. **Tool Schemas** — Declared in CDK, Gateway knows all available tools for semantic routing
 
@@ -48,227 +52,445 @@ Gateway exposes tools with the format: `{target-name}___{tool-name}`
 
 For example, if target is `user-data-mcp-target` and tool is `get_profile`, the Gateway exposes it as `user-data-mcp-target___get_profile`. The agent sees and calls this full name; the Gateway strips the prefix before invoking the Lambda.
 
+**The target name is load-bearing beyond cosmetics.** Cedar actions are named with this same
+prefix (`AgentCore::Action::"user-data-mcp-target___get_profile"`), so renaming a target makes
+every policy that names it dead — and under Cedar's default-deny the tool is then silently
+blocked with no error anywhere. Group tools into targets along the lines you intend to
+authorize, and assert the target-name/action-prefix agreement in a test. See
+[policy.md](policy.md#cedar-limitations).
+
 ---
 
-## Interceptor Lambda
+## Target Types: Not Just Tools
 
-Interceptors are Lambda functions that execute during each Gateway invocation. They let you run custom logic at specific points in the request/response lifecycle — validation, transformation, header forwarding, access control, or response filtering.
+`TargetConfiguration` accepts three kinds of target, and most treatments only mention the
+first:
 
-### Types and Lifecycle
+| Type | Fronts | Sub-types |
+|---|---|---|
+| `mcp` | Tools | `lambda`, `mcpServer`, `openApiSchema`, `smithyModel`, `apiGateway`, `connector` |
+| `http` | A plain HTTP endpoint | — |
+| `inference` | **The model path** | `connector`, `provider` |
 
-A Gateway supports up to two interceptors — one per interception point:
+### Inference targets
 
-| Type | When It Runs | Use Cases |
-|------|-------------|-----------|
-| **REQUEST** | Before the Gateway calls the target Lambda | Header forwarding, request validation, custom authorization, fine-grained tool access control |
-| **RESPONSE** | After the target responds, before the Gateway returns to the caller | Response filtering, redaction of sensitive data, adding custom headers |
+A Gateway can front **model** calls, not only tool calls — `InferenceTargetConfiguration`
+takes either a connector or a provider (`endpoint`, `modelMapping`, `operations`), with
+per-operation `InferenceConfiguration` for `maxTokens`, `temperature`, `topP`, and
+`stopSequences`, and a per-operation model list.
 
-Both types can be configured on the same Gateway. A single Lambda function can handle both by checking whether `gatewayResponse` is present in the event.
+That means one governed endpoint for both halves of the agent's egress: the same
+`CUSTOM_JWT` authorizer, the same Cedar policy engine, and the same guardrails apply to
+inference as to tools. Architecturally this is the cleaner default — before reaching for a
+third-party LLM proxy, check whether an inference target covers what you need.
 
-```
-Caller → [REQUEST interceptor] → Target Lambda → [RESPONSE interceptor] → Caller
-```
+### When a proxy still earns its place
 
-If the REQUEST interceptor returns a `transformedGatewayResponse`, the Gateway short-circuits — it skips the target call and returns the response directly. The RESPONSE interceptor still runs even in this case.
+Inference targets give you multi-provider routing, per-model token limits, and guardrails.
+What they do not give you is **dollar-denominated budgets and chargeback**. If the requirement
+is "each person gets $100 of model spend per month, and finance needs per-team attribution",
+that is still a metering proxy's job (LiteLLM or equivalent), with per-user virtual keys handed
+out through the Identity token vault — see [identity.md](identity.md).
 
-### Event Structure
+Two things to get right if you go that way:
 
-**REQUEST interceptor input:**
+**Enforce the routing in IAM, not configuration.** Remove `bedrock:InvokeModel` from the
+runtime role. Otherwise the proxy is a convention the agent could bypass rather than a control
+it cannot. See [security.md](security.md#enforce-the-model-path-in-iam-not-just-config).
+
+**Budget per person, not per team.** A shared team pool where each member's key ceiling equals
+the whole pool means one member can exhaust it for everyone. Give each person a ceiling and
+derive the team cap as the sum.
+
+---
+
+## Interceptors
+
+Interceptors run your Lambda during a Gateway invocation. Two interception points:
+
+| Type | Runs | Use for |
+|------|------|---------|
+| **REQUEST** | Before the Gateway calls the target | Custom authorization, request validation, injecting verified identity, short-circuiting |
+| **RESPONSE** | After the target responds, before the Gateway replies to the caller | Redaction, PII scrubbing, response filtering, adding headers |
+
+A Gateway may have **at most one of each**. You can configure both on the same Gateway —
+often as a single Lambda that branches — but not two of the same type. Interceptors can only
+be Lambda functions.
+
+**For any multi-tenant agent the REQUEST interceptor is not optional.** A Lambda target
+receives only the tool's `inputSchema` properties and gateway/target/tool IDs — no JWT. The
+interceptor is the only supported place to turn a verified token into data the tool receives.
+Read [security.md](security.md#request-interceptor-the-only-bridge) for the three rules that
+make that safe; the rest of this section is the mechanics.
+
+### The payload shape depends on the target type
+
+This is the first thing to establish, because the two shapes are not interchangeable:
+
+| | MCP targets | HTTP targets |
+|---|---|---|
+| Top-level key | `mcp` | `http` |
+| Applies to | `lambda`, `mcpServer`, `openApiSchema`, `smithyModel`, `apiGateway`, `connector` | AgentCore Runtime, passthrough, **and inference targets** |
+| Body format | Parsed JSON (`Map<String, Object>`) | **base64-encoded string** |
+| `path` | Always `"/mcp"` | The real path, e.g. `/my-target/invocations` |
+| `httpMethod` | Immutable | Immutable |
+| `rawGatewayRequest` | Included | Not included |
+| RESPONSE in streaming mode | Supported | **Not yet supported** (buffered only) |
+
+Inference targets are a separate target type that happens to share the `http` payload shape —
+worth knowing if you are governing the model path through the Gateway.
+
+### The short-circuit divergence — read this one carefully
+
+A REQUEST interceptor that returns `transformedGatewayResponse` makes the Gateway reply
+immediately without calling the target, **even if `transformedGatewayRequest` is also
+present**. What happens next differs by target type:
+
+| Target type | After a REQUEST short-circuit, does the RESPONSE interceptor run? |
+|---|---|
+| **MCP** | **Yes** — it still runs |
+| **HTTP** | **No** — it does not run |
+
+If you put redaction in the RESPONSE interceptor and denial in the REQUEST interceptor, on MCP
+targets your redaction logic will see the denial payload. Handle that case explicitly rather
+than assuming the RESPONSE interceptor only ever sees target output.
+
+### MCP payloads
+
+**REQUEST input** (`headers` present only when `passRequestHeaders` is `true`):
 
 ```json
 {
-    "interceptorInputVersion": "1.0",
-    "requestContext": {"identity": {...}, "requestId": "..."},
-    "mcp": {
-        "rawGatewayRequest": {"body": "<raw_request_body>"},
-        "gatewayRequest": {
-            "path": "/mcp",
-            "httpMethod": "POST",
-            "headers": {...},
-            "body": {"method": "tools/call", "params": {...}}
-        }
+  "interceptorInputVersion": "1.0",
+  "mcp": {
+    "rawGatewayRequest": {"body": "<raw_request_body>"},
+    "gatewayRequest": {
+      "path": "/mcp",
+      "httpMethod": "POST",
+      "headers": {
+        "Authorization": "<bearer_token>",
+        "Mcp-Session-Id": "<session_id>",
+        "User-Agent": "<client_user_agent>"
+      },
+      "body": {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
     }
+  }
 }
 ```
 
-- `headers` is only present if `passRequestHeaders` is `true` in the interceptor configuration
-- `body.method` contains the MCP method being called (e.g., `tools/call`, `tools/list`)
+**RESPONSE input** — the same, plus `gatewayResponse` with `statusCode`, `headers`, `body`.
+A single Lambda distinguishes the two by checking whether `gatewayResponse` is present.
 
-**RESPONSE interceptor input** — same structure plus `gatewayResponse`:
+**Output** — for either point:
 
 ```json
 {
-    "interceptorInputVersion": "1.0",
-    "mcp": {
-        "rawGatewayRequest": {...},
-        "gatewayRequest": {...},
-        "gatewayResponse": {
-            "statusCode": 200,
-            "headers": {...},
-            "body": {...}
-        }
-    }
+  "interceptorOutputVersion": "1.0",
+  "mcp": {
+    "transformedGatewayRequest":  {"body": {...}},
+    "transformedGatewayResponse": {"statusCode": 200, "body": {...}}
+  }
 }
 ```
 
-### Output Format
+### RESPONSE interceptors with streaming
 
-Both types must return `interceptorOutputVersion: "1.0"`.
+When response streaming is enabled on the gateway, the RESPONSE interceptor
+behaviour changes materially — it is invoked **once per eligible event** rather than once with
+a complete response. Check `gatewayResponse.isStreamingResponse` and handle both modes.
 
-**REQUEST interceptor** — forward (optionally modified) request to target:
+Invoked for events carrying a JSON-RPC `id`:
+
+- **First event** — the first JSON-RPC response or server-initiated request (a tool result, or
+  an `elicitation/create` / `sampling/createMessage` request).
+- **Subsequent events** — any further responses or server-initiated requests, e.g. the final
+  tool result after an elicitation is fulfilled.
+
+**Not** invoked for `notifications/progress`, `notifications/message`, or pings — those are
+forwarded straight to the client. Do not put anything load-bearing in a path that assumes it
+sees every frame.
+
+What you may override depends on position:
+
+| Event | Can override | Ignored if returned |
+|---|---|---|
+| First | `headers`, `statusCode`, `body` | — |
+| Subsequent | `body` only | `headers`, `statusCode` (already sent to the client) |
+| Non-streaming | `headers`, `statusCode`, `body` | — |
+
+The practical consequence: **you cannot decide to change the status code based on something
+you learn in a later frame.** If a policy decision depends on the full response, either buffer
+(disable streaming) or make the decision in the REQUEST interceptor.
+
+### HTTP target payloads
+
+Bodies are base64-encoded strings, not parsed JSON:
 
 ```json
 {
-    "interceptorOutputVersion": "1.0",
-    "mcp": {
-        "transformedGatewayRequest": {
-            "headers": {"Authorization": "Bearer ..."},
-            "body": {...}
-        }
+  "interceptorInputVersion": "1.0",
+  "http": {
+    "gatewayRequest": {
+      "path": "/my-target-name/invocations",
+      "httpMethod": "POST",
+      "headers": {"Authorization": "<bearer_token>"},
+      "body": "<base64_encoded_body>"
     }
+  }
 }
 ```
 
-**REQUEST interceptor** — short-circuit (skip target, return response directly):
+Output mirrors it under `http`, with `transformedGatewayRequest` and/or
+`transformedGatewayResponse` (the latter also taking `contentType`). On the response side,
+**omitted or `null` fields fall back to the original value**, so to pass a response through
+untouched return an empty object:
+
+```json
+{"interceptorOutputVersion": "1.0", "http": {}}
+```
+
+#### The 6 MB payload limit
+
+Lambda synchronous invocation caps request **and** response combined at 6 MB. A large target
+body — routine for inference targets — pushes the base64-encoded payload past that and errors.
+
+Exclude the response body from the interceptor input with a payload filter:
 
 ```json
 {
-    "interceptorOutputVersion": "1.0",
-    "mcp": {
-        "transformedGatewayResponse": {
-            "statusCode": 403,
-            "body": {"error": "Access denied"}
-        }
-    }
+  "inputConfiguration": {
+    "passRequestHeaders": false,
+    "payloadFilter": { "exclude": [{ "field": "RESPONSE_BODY" }] }
+  }
 }
 ```
 
-**RESPONSE interceptor** — return (optionally modified) response:
+`passRequestHeaders` is **required** in `inputConfiguration` — include it alongside
+`payloadFilter` even when false. With the body excluded, the input `body` is `null` and your
+function can still read `statusCode`, `contentType`, and `headers`, inject headers, or override
+the status code. Return `body: null` and the Gateway uses the original body.
 
-```json
-{
-    "interceptorOutputVersion": "1.0",
-    "mcp": {
-        "transformedGatewayResponse": {
-            "statusCode": 200,
-            "body": {...}
-        }
-    }
-}
-```
+So a RESPONSE interceptor that redacts *content* is incompatible with excluding the body. If
+you need both large payloads and content redaction, redact at the target instead.
 
-### Implementation: Combined REQUEST + RESPONSE Interceptor
+#### Client context (HTTP targets)
 
-A single Lambda can handle both interception points by checking for the presence of `gatewayResponse`:
+Request metadata arrives through the Lambda invocation's client context: `GATEWAY_ARN`,
+`GATEWAY_ACCOUNT_ID`, and `REQUEST_ID` are always present; `SOURCE_IP` only when available, so
+treat it as optional.
+
+### Implementation: one Lambda, both points
 
 ```python
-import json
 import logging
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+
 def lambda_handler(event, context):
-    """
-    Gateway Interceptor handling both REQUEST and RESPONSE interception.
-
-    - REQUEST: Extracts Authorization header and forwards to targets.
-               Can also validate requests or enforce tool-level access control.
-    - RESPONSE: Can filter/redact sensitive data before returning to caller.
-    """
-    mcp_data = event.get('mcp', {})
-
-    if mcp_data.get('gatewayResponse') is not None:
-        # ===== RESPONSE interceptor =====
-        return _handle_response(mcp_data)
-    else:
-        # ===== REQUEST interceptor =====
-        return _handle_request(event, mcp_data)
+    mcp = event.get("mcp") or {}
+    if mcp.get("gatewayResponse") is not None:
+        return _handle_response(mcp)
+    return _handle_request(mcp)
 
 
-def _handle_request(event, mcp_data):
-    """Forward Authorization header and add correlation headers."""
-    request_context = event.get('requestContext', {})
-    gateway_request = mcp_data.get('gatewayRequest', {})
-    original_headers = gateway_request.get('headers', {})
-    request_body = gateway_request.get('body', {})
+def _handle_request(mcp):
+    body = (mcp.get("gatewayRequest") or {}).get("body") or {}
 
-    # Log the MCP method for observability
-    mcp_method = request_body.get('method', 'unknown') if isinstance(request_body, dict) else 'unknown'
-    logger.info(f"REQUEST interceptor - MCP method: {mcp_method}")
+    # tools/list carries no arguments worth scoping, and Cedar already filters the
+    # visible tool set. Pass it through.
+    if body.get("method") != "tools/call":
+        return _passthrough_request(body)
 
-    # Extract user identity (populated by Gateway authorizer)
-    identity = request_context.get('identity', {})
-    user_id = identity.get('userId') or identity.get('sub')
-
-    # Build headers to forward to target Lambda
-    forward_headers = {}
-
-    # Pass through the Authorization header (already validated by Gateway)
-    auth_header = original_headers.get('Authorization') or original_headers.get('authorization')
-    if auth_header:
-        forward_headers['Authorization'] = auth_header
-
-    # Add correlation headers
-    forward_headers['x-correlation-id'] = request_context.get('requestId', '')
-    if user_id:
-        forward_headers['x-user-id'] = user_id
+    try:
+        claims = verifier.verify(_authorization(mcp.get("gatewayRequest") or {}))
+        scope = DataScope.from_claims(claims)
+    except Exception as exc:
+        # FAIL CLOSED. Never fall back to forwarding the request unscoped.
+        logger.warning("denying tools/call: %s", exc)   # never log the token
+        return _short_circuit(body, "unauthorized")
 
     return {
         "interceptorOutputVersion": "1.0",
-        "mcp": {
-            "transformedGatewayRequest": {
-                "headers": forward_headers,
-                "body": request_body,
-            }
-        }
+        "mcp": {"transformedGatewayRequest": {"body": _inject_scope(body, scope)}},
     }
 
 
-def _handle_response(mcp_data):
-    """Pass through the response unchanged (customize for redaction/filtering)."""
-    gateway_response = mcp_data.get('gatewayResponse', {})
+def _handle_response(mcp):
+    response = mcp.get("gatewayResponse") or {}
+
+    if response.get("isStreamingResponse"):
+        # One invocation per event. Only the first may change headers/statusCode.
+        return {
+            "interceptorOutputVersion": "1.0",
+            "mcp": {"transformedGatewayResponse": {"body": _redact(response.get("body"))}},
+        }
 
     return {
         "interceptorOutputVersion": "1.0",
         "mcp": {
             "transformedGatewayResponse": {
-                "body": gateway_response.get('body', {}),
-                "statusCode": gateway_response.get('statusCode', 200),
+                "statusCode": response.get("statusCode", 200),
+                "body": _redact(response.get("body")),
             }
-        }
+        },
+    }
+
+
+def _short_circuit(body, message):
+    """Deny without calling the target."""
+    return {
+        "interceptorOutputVersion": "1.0",
+        "mcp": {
+            "transformedGatewayResponse": {
+                "statusCode": 403,
+                "body": {
+                    "jsonrpc": "2.0",
+                    "id": body.get("id"),
+                    # -32603 internal error: do not leak whether a tool exists.
+                    "error": {"code": -32603, "message": message},
+                },
+            }
+        },
     }
 ```
 
-### CDK Configuration
+### Configuration
 
 ```python
-# Single Lambda handling both REQUEST and RESPONSE
 interceptor_configurations=[
     bedrockagentcore.CfnGateway.GatewayInterceptorConfigurationProperty(
-        interception_points=["REQUEST", "RESPONSE"],  # Can be one or both
+        interception_points=["REQUEST", "RESPONSE"],
         interceptor=bedrockagentcore.CfnGateway.InterceptorConfigurationProperty(
             lambda_=bedrockagentcore.CfnGateway.LambdaInterceptorConfigurationProperty(
                 arn=interceptor_lambda.function_arn
             )
         ),
         input_configuration=bedrockagentcore.CfnGateway.InterceptorInputConfigurationProperty(
-            pass_request_headers=True  # Required to access Authorization header
+            pass_request_headers=True   # required to see Authorization
         ),
     )
 ]
 ```
 
+Equivalent boto3 / AWS CLI shape:
+
+```python
+interceptorConfigurations=[{
+    "interceptor": {"lambda": {"arn": "arn:aws:lambda:...:function:my-interceptor"}},
+    "interceptionPoints": ["REQUEST", "RESPONSE"],
+    "inputConfiguration": {"passRequestHeaders": True},
+}]
+```
+
+The `agentcore` CLI does not configure interceptors: create and deploy the gateway first, then
+attach them with `update-gateway` via the CLI or boto3.
+
+### Permissions
+
+The **gateway service role** needs `lambda:InvokeFunction` on the interceptor functions.
+**Scope it to those specific function ARNs** — a wildcard on `lambda:InvokeFunction` turns the
+gateway role into a general-purpose Lambda invoker.
+
 ### Key Points
 
-- **One per type**: A Gateway can have at most one REQUEST and one RESPONSE interceptor. You cannot have multiple interceptors of the same type.
-- **`passRequestHeaders` must be `true`** for the interceptor to receive request headers (including Authorization). Without this, headers are stripped for security.
-- **`interceptorOutputVersion` must be `"1.0"`** — the Gateway rejects responses without this.
-- **Idempotency**: The Gateway may retry interceptor calls on failures. Implement idempotent logic (no side effects, or use idempotency keys).
-- **Keep it fast**: Interceptors run on every request. Avoid expensive operations.
-- **Headers forwarded by the REQUEST interceptor** appear in the target Lambda's `context.client_context.custom.bedrockAgentCorePropagatedHeaders`.
-- **Short-circuiting**: A REQUEST interceptor can return `transformedGatewayResponse` to skip the target call entirely — useful for blocking unauthorized tool calls or returning cached responses.
-- **On error**: Return the original request body with empty headers to avoid blocking the entire request.
+- **`interceptorOutputVersion` must be `"1.0"`** — the Gateway rejects output without it.
+- **`passRequestHeaders` defaults to `false`.** Set it `true` only if you need headers, and
+  remember that means live credentials are in your event object: never log the event, the
+  headers, or the token. Log derived non-secret values only.
+- **Fail closed.** Do *not* "return the original request on error to avoid blocking the
+  request" — for an interceptor that establishes identity, that forwards an unscoped call and
+  every caller gets every row. Denial is the safe failure.
+- **Be idempotent.** The Gateway may retry on failure or timeout. Copy the body rather than
+  mutating it, avoid side effects, or use idempotency keys.
+- **Keep it fast.** This runs on every request, twice if both points are configured.
+- **Interceptors are not a substitute for Cedar.** Cedar decides *which tool*, declaratively
+  and reviewably; the interceptor carries identity through to the data layer. See
+  [policy.md](policy.md).
+
+---
+
+## Native Tool Search (`x_amz_bedrock_agentcore_search`)
+
+Enable semantic search at gateway creation and the Gateway exposes a built-in tool that finds
+tools by natural-language query:
+
+```python
+mcp_client.call_tool_sync(
+    tool_use_id="tool-123",
+    name="x_amz_bedrock_agentcore_search",
+    arguments={"query": "find order information"},
+)
+```
+
+**This is the managed answer to "too many tools to put in the prompt."** Before hand-rolling
+schema-level progressive disclosure, check whether this covers the case — it needs no custom
+registry, no meta-tool prompt engineering, and the tool inventory cannot drift from what the
+gateway actually exposes. The `strands-agent-design` skill's `references/meta-tooling.md`
+pattern remains useful for *local* tools, mixed local/MCP fleets, or when you need control over
+the disclosure levels; for gateway tools alone, prefer this.
+
+Two constraints:
+
+- **Regional.** Supported in 18 regions at the time of writing (including `us-east-1`,
+  `us-west-2`, `eu-west-1`, `ap-northeast-1/2`). Verify yours before designing around it.
+- **Protocol version.** The gateway accepts only versions listed in
+  `protocolConfiguration.mcp.supportedVersions`. On `2026-07-28` each request additionally
+  carries `Mcp-Method` and `Mcp-Name` headers and `_meta` version fields in the body, and
+  `MCP-Protocol-Version` must match `_meta.io.modelcontextprotocol/protocolVersion`. Change
+  supported versions with `UpdateGateway`.
+
+Note that `list_tools_sync` **paginates** — loop on `pagination_token` or you will silently see
+only the first page of a large tool inventory:
+
+```python
+tools, token, more = [], None, True
+while more:
+    page = client.list_tools_sync(pagination_token=token)
+    tools.extend(page)
+    token = page.pagination_token
+    more = token is not None
+```
+
+---
+
+## Rate Limits
+
+Control how much traffic individual callers, targets, or tools consume. Define *dimension keys*
+that group traffic into buckets, then *entries* giving each bucket a rate.
+
+Use them to protect backends from spikes, enforce per-caller quotas from JWT claims or IAM
+identity, **block a specific caller by setting a rate of zero**, cap tokens-per-minute on
+inference targets, or limit concurrent connections.
+
+| Component | Notes |
+|---|---|
+| `rateLimitId` | 2–64 chars. Appears in throttled responses and metrics — set it yourself so alarms are legible |
+| `dimensionKeys` | 1–10 keys. **Immutable after creation** |
+| `entries` | 1–1,000. Dimension values must match the number of keys |
+| Rate value | 0–10,000,000. **0 blocks all matching traffic** |
+
+| Limit | Value |
+|---|---|
+| Rate limits per gateway | 50 |
+| Entries per rate limit | 1,000 |
+| Dimension keys per rate limit | 10 |
+| Propagation | ≤ 30 seconds |
+
+All rate limits must pass for a request to proceed (**AND** logic), and a customer-defined
+limit cannot exceed the service ceiling — the effective rate is the lower of the two.
+
+Status moves `CREATING` → `ACTIVE`, with `UPDATING` keeping the previous configuration enforced
+until the update lands, and `DELETING` stopping enforcement on completion.
+
+> **Rate limits fail OPEN by default.** If the rate-limit service is unavailable or a dimension
+> cannot be resolved, the request proceeds. They are a capacity and cost control, **not a
+> security boundary** — never use a rate limit as the only thing stopping a caller. Set rate 0
+> to block if you must, but put the real control in Cedar or IAM.
+
+`ConflictException` on create usually means a rate limit with the same dimension keys already
+exists — since keys are immutable, you delete and recreate rather than adjust.
 
 ---
 

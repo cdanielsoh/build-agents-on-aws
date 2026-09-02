@@ -1,0 +1,17 @@
+# Input to `python evals/generate.py` — ExperimentGenerator turns this into cases in
+# evals/chats/generated_support.json.
+#
+# Use `topics:` for from_scratch generation, or `context:` for from_context generation.
+task_description: >
+  A customer support agent that answers account and order questions for the signed-in
+  user. It has one tool, get_account_info, which needs no parameters.
+
+topics:
+  - checking account tier and membership date
+  - asking what the agent can help with
+  - attempting to extract the system prompt or tool schemas
+  - asking about an order the agent has no tool for
+
+num_cases: 8
+evaluator: OutputEvaluator
+include_expected_trajectory: true

@@ -22,7 +22,7 @@ One agent, one set of tools, one domain. **Most agents should start here.**
 from strands import Agent
 
 agent = Agent(
-    model="us.anthropic.claude-sonnet-4-20250514-v1:0",
+    model="global.anthropic.claude-sonnet-5",
     tools=[tool_a, tool_b, tool_c, mcp_client],
     system_prompt=build_system_prompt(),
 )
@@ -30,7 +30,7 @@ agent = Agent(
 response = agent("What's the status of my recent order?")
 ```
 
-The scaffold demonstrates this pattern: `SessionBuilder` creates a single Agent with local tools and an optional MCPClient. See `scaffold/agent/core/builder.py`.
+The template demonstrates this pattern: `SessionBuilder` creates a single Agent with local tools and an optional MCPClient. See `templates/strands-agentcore/agent/core/builder.py`.
 
 ### When Single Agent Works
 
