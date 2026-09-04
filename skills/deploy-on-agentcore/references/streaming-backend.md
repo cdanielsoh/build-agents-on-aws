@@ -130,7 +130,26 @@ The `interrupt_id` is what the caller sends back in the `interrupt_responses` pa
 
 ## Session ID Requirements
 
-- **Minimum 33 characters** — AgentCore rejects shorter IDs
+- **33–256 characters** on the way in. The request field (`SessionType` in the API
+  model) has a 33-character *minimum* and no character restrictions.
 - **Same ID for entire conversation** — including interrupt resumptions
 - **Routes to the same container** — same session ID = same VM = same agent instance with accumulated message history
-- **Pad if needed**: `f"{session_id}-{'0' * (33 - len(session_id))}"`
+
+The trap is that the inbound and outbound shapes disagree: the *response*
+`runtimeSessionId`, the `Mcp-Session-Id` header, and Memory's `sessionId` all use a
+different shape with **no minimum** and a character restriction
+(`[a-zA-Z0-9][a-zA-Z0-9-_]*`, ≤100). So an ID that Memory accepts can be rejected by
+`InvokeAgentRuntime` for being too short, which presents as a broken caller rather
+than as a bad identifier.
+
+Generate one ID per conversation that satisfies the strictest reading of both — ≥33
+characters, alphanumerics plus `-` and `_`:
+
+```python
+session_id = f"sess-{uuid.uuid4()}"      # 41 chars, valid everywhere
+```
+
+`str(uuid.uuid4())` is 36 and works. **`uuid.uuid4().hex` is 32 and fails by one
+character** — as does any truncated-for-readability variant. Prefer generating a
+long-enough ID over padding a short one; padding hides the constraint from the next
+reader. Full constraint table in [naming.md](naming.md#session-ids-the-request-and-response-shapes-disagree).

@@ -44,10 +44,15 @@ description: >
 
 # Building Agents on AWS Bedrock AgentCore
 
-> **Validated against `bedrock-agentcore` 1.22.0 and `aws-cdk-lib` 2.267.0** (September 2026).
+> **Validated against `bedrock-agentcore` 1.22.0 and `aws-cdk-lib` 2.268.0** (September 2026).
 > Grant types, tool shapes, and evaluator IDs were checked against the live
 > `bedrock-agentcore-control` API model and the AWS devguide. If your version differs, verify
 > before trusting these APIs.
+>
+> The CDK in `references/cdk-infrastructure.md` has additionally been **end-to-end
+> deployed**: ECR + CodeBuild + Cognito + Gateway (Lambda target) + Runtime + short-term
+> Memory, to `Runtime: READY`. The IAM DefaultPolicy race and the synth-time context-guard
+> deadlock documented there are both failures that deploy hit for real.
 >
 > **CDK is fully current.** What AWS deprecated is the Python
 > `bedrock-agentcore-starter-toolkit`, not CDK — the `agentcore` CLI's own `deploy` command is
@@ -112,6 +117,9 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Set PostgreSQL RLS scope without leaking it         | `references/security.md`             |
 | Test that a security control actually works         | `references/security.md`             |
 | Pin container images so deploys are not silent no-ops | `references/cdk-infrastructure.md` |
+| **Name any resource** (hyphen vs underscore, length limits) | `references/naming.md`        |
+| Pick a session ID that Runtime *and* Memory both accept | `references/naming.md`            |
+| Scope Memory namespaces by tenant                   | `references/naming.md`                |
 | Implement row-level security / multi-layer auth     | `references/security.md`             |
 | Understand the token propagation chain              | `references/security.md`             |
 | Integrate AgentCore Memory for persistence          | `references/agentcore-memory.md`     |

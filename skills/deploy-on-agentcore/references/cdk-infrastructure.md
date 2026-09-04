@@ -179,6 +179,12 @@ class AgentRuntimeStack(Stack):
         ))
 
         # ========== AgentCore Memory ==========
+        # The replace() is not cosmetic. Memory and Runtime names must match
+        # [a-zA-Z][a-zA-Z0-9_]{0,47} — hyphens are rejected — while Gateway and target
+        # names must match ([0-9a-zA-Z][-]?){1,100}, which rejects underscores. One
+        # project name therefore needs two spellings. CDK does not validate either, so
+        # a wrong one synthesizes fine and fails minutes into the deploy. See
+        # references/naming.md for the full table.
         stack_name_clean = Stack.of(self).stack_name.replace("-", "_")
 
         memory = bedrockagentcore.CfnMemory(
@@ -221,13 +227,17 @@ class AgentRuntimeStack(Stack):
         }
 
         # NEVER a mutable tag here — see "Image tags must be content-addressed" below.
-        # Pass the tag in from a build step that hashes what actually goes in the image.
-        image_tag = self.node.try_get_context("image_tag")
+        # Take it as a constructor argument, derived from the hash of the staged
+        # source, and assert only that it is not mutable:
         if not image_tag or image_tag == "latest":
-            raise ValueError(
-                "image_tag context value is required and must not be 'latest'. "
-                "Pass -c image_tag=$(./scripts/image_tag.sh)."
-            )
+            raise ValueError(f"refusing to deploy a mutable image tag: {image_tag!r}")
+
+        # Do NOT reach for context (`self.node.try_get_context("image_tag")`) and
+        # raise when it is absent. `cdk deploy <any-stack>` synthesizes the WHOLE app,
+        # so a synth-time raise in one stack blocks deploying every other stack in it
+        # — including the ECR stack you have to deploy first to have anywhere to push.
+        # That deadlocks a first deploy, and the traceback points at the runtime stack
+        # while the command you ran named a different one.
 
         runtime_config = {
             "agent_runtime_name": "my_agent_runtime",
@@ -268,6 +278,11 @@ class AgentRuntimeStack(Stack):
         runtime = bedrockagentcore.CfnRuntime(self, "AgentRuntime", **runtime_config)
         runtime.node.add_dependency(memory)
 
+        # Depend on the ROLE CONSTRUCT, not just role_arn. Omitting this is a hard
+        # deploy failure with a misleading error — see "The IAM DefaultPolicy race"
+        # below.
+        runtime.node.add_dependency(runtime_role)
+
         # ========== Outputs ==========
         CfnOutput(self, "RuntimeArn", value=runtime.attr_agent_runtime_arn, export_name="AgentRuntimeArn")
         CfnOutput(self, "RuntimeId", value=runtime.attr_agent_runtime_id, export_name="AgentRuntimeId")
@@ -281,6 +296,37 @@ class AgentRuntimeStack(Stack):
 **Environment variables**: The Runtime passes these to the container. Use SSM parameter names (not values) so MCP servers can be redeployed without redeploying the Runtime.
 
 **Memory dependency**: The CfnMemory resource must be created before CfnRuntime, hence the explicit `add_dependency`.
+
+### The IAM DefaultPolicy race
+
+Passing `role_arn=runtime_role.role_arn` makes CloudFormation wait for the
+`AWS::IAM::Role`. It does **not** make it wait for that role's inline
+`DefaultPolicy`, which CDK emits as a *sibling* resource. So CloudFormation creates
+the runtime and the policy in parallel, the control plane validates the ECR URI
+using a role that has no permissions attached yet, and the deploy dies with:
+
+```
+Resource handler returned message: "Invalid request provided: Access denied while
+validating ECR URI '<acct>.dkr.ecr.<region>.amazonaws.com/<repo>:<tag>'. The
+execution role requires permissions for ecr:GetAuthorizationToken,
+ecr:BatchGetImage, and ecr:GetDownloadUrlForLayer operations."
+```
+
+The error names three ECR actions, so it reads as a missing grant — and you will go
+add ECR permissions that are already there. `repository.grant_pull(runtime_role)`
+covers all three. The problem is *when*, not *what*.
+
+```python
+runtime.node.add_dependency(runtime_role)   # the construct, not role_arn
+```
+
+`node.add_dependency` on a construct covers its entire subtree, `DefaultPolicy`
+included. Confirmed both ways on a real deploy: fails without the line, succeeds
+with it, nothing else changed.
+
+The same trap applies to any `Cfn*` resource that takes a role ARN and is validated
+eagerly by its control plane — `CfnGateway` with its execution role is the other one
+in this file.
 
 ---
 
@@ -463,7 +509,9 @@ class MCPGatewayStack(Stack):
                 )
             ],
         )
-        target.add_dependency(gateway)
+        # add_resource_dependency, not add_dependency — the latter is deprecated on
+        # CfnResource in current aws-cdk-lib and warns on every synth.
+        target.add_resource_dependency(gateway)
         return target
 
     def _user_data_tools(self):
@@ -644,29 +692,46 @@ The critical IAM permission is `bedrock-agentcore:InvokeAgentRuntime` — withou
 ### Deployment Order
 
 ```
-1. AuthStack (Cognito)
+1. EcrStack (repository)
+   ↓ must exist before anything pushes to it
+2. ImageBuildStack (CodeBuild) — then run the build
+   ↓ image is in ECR at the derived tag
+3. AuthStack (Cognito)
    ↓ exports: UserPoolId, UserPoolClientId
-2. MCPGatewayStack (Gateway + Lambda targets)
+4. MCPGatewayStack (Gateway + Lambda targets)
    ↓ writes: SSM /mcp/endpoints/gateway/unified
-3. AgentRuntimeStack (Agent container + Memory)
+5. AgentRuntimeStack (Agent container + Memory)
    ↓ exports: AgentRuntimeArn
-4. BackendStack (ECS Fargate + ALB)
+6. BackendStack (ECS Fargate + ALB)
 ```
+
+Steps 1-2 exist because **CfnRuntime resolves the image digest when it is created**.
+The image must be in ECR before step 5, and re-pushing the same tag afterwards will
+not roll the runtime. Keep the ECR repository in its own stack from the runtime's, or
+there is no deploy that creates the repository early enough to push to.
 
 ### Cross-Stack References
 
 | From | To | Via |
 |------|----|-----|
-| MCPGatewayStack | AuthStack | `Fn.import_value("UserPoolId")`, `Fn.import_value("UserPoolClientId")` |
-| AgentRuntimeStack | AuthStack | Constructor params: `cognito_user_pool_id`, `cognito_client_id` |
+| MCPGatewayStack | AuthStack | Constructor params: `user_pool`, `user_pool_client` (CDK emits the export/import) |
+| AgentRuntimeStack | AuthStack | Same — pass the constructs |
+| AgentRuntimeStack | EcrStack | Constructor param: `repository` |
+| AgentRuntimeStack | ImageBuildStack | Constructor param: `image_tag` — a synth-time string, so it lands in the container URI directly |
 | AgentRuntimeStack | MCPGatewayStack | SSM parameter read at container startup (not CDK synthesis time) |
 | BackendStack | AgentRuntimeStack | Constructor param: `agent_runtime_arn` |
 
+`Fn.import_value("UserPoolId")` also works, but hard-codes an export name and gives up
+the dependency ordering CDK would have derived for you.
+
 ### CDK App Entry Point
 
+Pass constructs, not looked-up strings. CDK turns a cross-stack reference into an
+export/import pair itself and derives the deploy order from it:
+
 ```python
+import os
 import aws_cdk as cdk
-import boto3, os
 
 app = cdk.App()
 
@@ -675,24 +740,35 @@ env = cdk.Environment(
     region=os.environ.get("AWS_REGION", "us-west-2"),
 )
 
-# Read Cognito outputs from deployed AuthStack
-cfn = boto3.client("cloudformation")
-auth_outputs = {}
-try:
-    stack = cfn.describe_stacks(StackName="AuthStack")
-    auth_outputs = {o["OutputKey"]: o["OutputValue"] for o in stack["Stacks"][0].get("Outputs", [])}
-except Exception:
-    pass  # Will use SigV4 instead of OAuth
-
+ecr_stack = EcrStack(app, "EcrStack", env=env)
+build_stack = ImageBuildStack(app, "ImageBuildStack", repository=ecr_stack.repository, env=env)
+auth_stack = AuthStack(app, "AuthStack", env=env)
+gateway_stack = MCPGatewayStack(
+    app, "MCPGatewayStack",
+    user_pool=auth_stack.user_pool,
+    user_pool_client=auth_stack.user_pool_client,
+    env=env,
+)
 AgentRuntimeStack(
     app, "AgentRuntimeStack",
-    cognito_user_pool_id=auth_outputs.get("UserPoolId"),
-    cognito_client_id=auth_outputs.get("UserPoolClientId"),
+    repository=ecr_stack.repository,
+    image_tag=build_stack.image_tag,        # synth-time str, not a token
+    user_pool=auth_stack.user_pool,
+    user_pool_client=auth_stack.user_pool_client,
+    mcp_ssm_prefix=gateway_stack.ssm_prefix,
     env=env,
 )
 
 app.synth()
 ```
+
+Interpolating `user_pool.user_pool_id` into an f-string for the discovery URL works —
+CDK resolves the token inside the string at synth. Verified on a real deploy.
+
+Avoid the alternative of a `boto3.describe_stacks` lookup at synth time to read the
+Auth stack's outputs. It makes synthesis depend on deployed state, so a fresh account
+silently synthesizes a *different template* (usually one with no authorizer at all)
+instead of failing, and `cdk diff` stops being a function of your source.
 
 ### SSM for Dynamic Config
 
@@ -730,7 +806,69 @@ The failure is worth understanding precisely, because every individual step look
 The result is a green build, a green deploy, and a live runtime still serving last week's
 code. Nothing short of a template change will move it.
 
-### The fix: hash what goes into the image
+### The fix, option A: let CDK hash it and build in CodeBuild
+
+The least code, and the option to reach for first. `s3_assets.Asset` already hashes
+exactly the files it stages, and `asset_hash` is a **plain Python string at synth
+time** — not a token — so the same value can be handed to the build and embedded in
+the runtime's container URI:
+
+```python
+source_asset = s3_assets.Asset(self, "AgentSource", path=project_root, exclude=[...])
+self.image_tag = f"src-{source_asset.asset_hash[:16]}"     # concrete str
+
+project = codebuild.Project(
+    self, "AgentImageBuild",
+    source=codebuild.Source.s3(bucket=source_asset.bucket, path=source_asset.s3_object_key),
+    environment=codebuild.BuildEnvironment(
+        # ARM host: plain `docker build` emits linux/arm64, which is what AgentCore
+        # Runtime requires. No buildx, no qemu, no local container runtime.
+        build_image=codebuild.LinuxArmBuildImage.AMAZON_LINUX_2_STANDARD_3_0,
+        compute_type=codebuild.ComputeType.SMALL,
+        privileged=True,                                   # to run the Docker daemon
+    ),
+    environment_variables={
+        # Baked at synth time, so `start-build` needs no overrides and cannot
+        # disagree with what the runtime stack deployed.
+        "IMAGE_TAG": codebuild.BuildEnvironmentVariable(value=self.image_tag),
+        ...
+    },
+    ...
+)
+repository.grant_pull_push(project)
+source_asset.grant_read(project)
+repository.grant(project, "ecr:DescribeImages")   # for the skip check below
+```
+
+Then pass `build_stack.image_tag` into the runtime stack as a constructor argument.
+No `-c image_tag=`, no shell script, no git dependency, and no way for the tag that
+was built to differ from the tag that was deployed.
+
+Two details worth copying:
+
+- **Exclude everything the Dockerfile does not copy** (`infra`, `evals`, `.venv`,
+  `cdk.out`, `**/__pycache__`, `*.md`). Anything that leaks into the asset churns the
+  hash, which rebuilds and redeploys a byte-identical image.
+- **Make the buildspec skip an existing tag.** With `TagMutability.IMMUTABLE` on the
+  repository, re-pushing an existing tag is an error rather than a no-op, and the same
+  tag means the same source means the same image:
+
+  ```bash
+  if aws ecr describe-images --repository-name ${IMAGE_REPO##*/} \
+       --image-ids imageTag=${IMAGE_TAG} >/dev/null 2>&1; then
+    echo "tag already present, skipping build"
+  else
+    docker build -t ${IMAGE_REPO}:${IMAGE_TAG} . && docker push ${IMAGE_REPO}:${IMAGE_TAG}
+  fi
+  ```
+
+Deploy order is then: ECR + build stacks, `aws codebuild start-build` and wait for
+`SUCCEEDED`, then the remaining stacks. The runtime stack must be last regardless of
+how the image gets built, because AgentCore pins the digest at create time.
+
+### The fix, option B: hash what goes into the image yourself
+
+For local builds, where you want the tag without a CodeBuild round trip.
 
 ```bash
 #!/usr/bin/env bash
