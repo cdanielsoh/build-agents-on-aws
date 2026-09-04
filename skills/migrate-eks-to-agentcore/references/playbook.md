@@ -36,8 +36,14 @@ EKS. (A golden set if the customer chose to build one — not required to procee
 Deploy the same image behind `BedrockAgentCoreApp`. Invoke it directly. Compare answers
 against EKS on the same prompts.
 
-- Same container, two entrypoints (`server.py` for EKS, `app.py` for Runtime). Keeping
-  both working is what makes phases 1-3 reversible.
+- Same container, two entrypoints — theirs for EKS, a new one for Runtime. Keeping both
+  working is what makes phases 1-3 reversible. **Do not assume their entrypoint is
+  `server.py`**; read the Dockerfile `CMD`, because a repo whose CMD names a module that
+  does not exist tells you the image is built from a different tree, which is a finding.
+- **Only one of the two can be the image `CMD`.** `CfnRuntime`'s container configuration
+  carries a URI and no command override, so the CMD must be the AgentCore entrypoint and
+  the **EKS Deployment overrides it** with `command:`/`args:`. That override is a change
+  to the running service — schedule it in Phase 0.
 - Set `SESSION_BACKEND=memory` on Runtime — the microVM holds session state, so an
   external store would be a round trip for data already in process.
 - **Do not** set `OTEL_*`. The ADOT sidecar configures the exporters, and overriding

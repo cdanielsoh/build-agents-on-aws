@@ -93,9 +93,22 @@ recommends. Quote whichever matches what you are proposing.
 Not previously stated anywhere, and it is the central economic question for short-turn services.
 
 `StopRuntimeSession` saves ~12× on memory by ending the session. Warm reuse avoids microVM
-start latency by *keeping* the session. **You cannot have both.** AWS is explicit: "Without a
-consistent session ID, each request may be routed to a new microVM, which may result in
-additional latency due to cold starts" `[docs]`.
+start latency by *keeping* the session. **You cannot have both at the extremes.** AWS is explicit:
+"Without a consistent session ID, each request may be routed to a new microVM, which may result
+in additional latency due to cold starts" `[docs]`.
+
+**But it is a dial, not a switch, and calling it a binary was wrong.** `CfnRuntime` takes
+`lifecycle_configuration`, whose `LifecycleConfigurationProperty` carries
+`idle_runtime_session_timeout` and `max_lifetime` `[verified]` in aws-cdk-lib — so the 900s
+default that produces the idle tail is itself tunable. A third shape:
+
+> **Sticky reuse with a short idle timeout.** Keep the session across a burst of turns, then let
+> it expire in tens of seconds rather than fifteen minutes. Pays one start per burst, and bills
+> an idle tail sized to the observed think-time distribution instead of to the default.
+
+Size the timeout from the p90 gap between turns, not from a round number. That makes the real
+question "how long should the tail be", which has an answer per workload, rather than
+"stop or reuse", which does not.
 
 So for a **single-turn** service — where every request is its own conversation — the "tuned"
 configuration this file recommends means **paying microVM start on every request**. Measured
@@ -108,6 +121,10 @@ having both columns claimed.
 | Single-turn | every request | pays start latency every time. Cost-optimal, latency-worst |
 | Short conversation (3-10 turns) | at conversation end | the sweet spot — one start amortised over the turns |
 | Long / shift-length | at conversation end | start cost is negligible; but check the session ceiling |
+| **Conversation end is unobservable** | not implementable | tune `idleRuntimeSessionTimeout` down instead. This is the common case, because users close tabs rather than saying goodbye |
+
+That last row is the one to reach for most often: `StopRuntimeSession` requires knowing a
+conversation ended, and for most services nothing tells you.
 
 For single-turn, also note the binding quota changes: the **new-session creation rate** (25/s
 default) becomes the limit rather than the concurrent-session cap, because every request

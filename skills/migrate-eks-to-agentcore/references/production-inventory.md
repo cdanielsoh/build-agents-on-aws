@@ -197,10 +197,12 @@ platform prevents it.
 
 **If the knowledge store is VPC-resident with no public endpoint, it decides the network
 workstream.** On EKS the pod already has an ENI in the VPC. On AgentCore it forces
-`networkMode = "VPC"`, cascading into interface endpoints for `bedrock-runtime`,
-`ecr.api`/`ecr.dkr`, an S3 **gateway** endpoint for image layers, `logs`/`xray`/`monitoring`,
-`ssm`, `sts`. A missing endpoint does not fail the deploy — it hangs the agent at runtime
-with nothing in the logs naming it. → `vpc-and-network-isolation.md`
+`networkMode = "VPC"`, cascading into a set of interface endpoints plus an S3 **gateway**
+endpoint for image layers. **The list is not reproduced here** — it grows, and the copies that
+used to sit in this file and in `/plan-agentcore-migration` both went stale and omitted
+`bedrock-agent-runtime`. A missing endpoint does not fail the deploy — it hangs the agent at
+runtime with nothing in the logs naming it. →
+[vpc-and-network-isolation.md](../../deploy-on-agentcore/references/vpc-and-network-isolation.md)
 
 Retrieval ACLs deserve a direct question: a store that returns any chunk to any caller is a
 leak path no amount of *tool* authorization fixes, because filtering must happen inside

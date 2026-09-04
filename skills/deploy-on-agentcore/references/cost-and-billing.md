@@ -64,7 +64,7 @@ Measured, 3-turn conversation, 235 MiB peak, 30s think time between turns:
 
 ```python
 client.stop_runtime_session(
-    agentRuntimeId=runtime_id,
+    agentRuntimeArn=runtime_arn,     # ARN, *not* the id — see below
     runtimeSessionId=session_id,
 )
 ```
@@ -72,14 +72,42 @@ client.stop_runtime_session(
 One API call. Nothing fails if you omit it — the session simply bills until it expires,
 which is why this is easy to miss in review and expensive in production.
 
+**Two traps that turn this saving into an outage.** An earlier version of this file passed
+`agentRuntimeId` here, and that error propagated into generated code before it was caught.
+
+- The parameter is `agentRuntimeArn`. `[verified]` from the botocore model:
+  `required: ['runtimeSessionId', 'agentRuntimeArn']`. Note `invoke_agent_runtime` also takes
+  the ARN, so there is **no** id/ARN asymmetry between the two calls to remember.
+- **`ParamValidationError` is not a subclass of `ClientError`** `[verified]`. The "nothing fails
+  if you omit it" framing above invites wrapping the call in `except ClientError` to make it
+  best-effort — which does not catch a wrong parameter name. Called from a `finally:`, the raise
+  then replaces the return value, so a fully computed answer is discarded on every request.
+  Catch `(ClientError, ParamValidationError)`, or `Exception`.
+
+Confirm any parameter name against the model rather than memory:
+
+```bash
+python3 -c "import botocore.session as s; m=s.get_session().get_service_model(
+  'bedrock-agentcore').operation_model('StopRuntimeSession'); print(m.input_shape.required_members)"
+```
+
 The hard part is not the call, it is knowing **when a conversation ended**. Users close
 tabs; they do not send a goodbye. In practice: an explicit close from the client, or an
 `idleRuntimeSessionTimeout` tuned to the observed think-time distribution. Lowering the
 timeout trades cost against a cold start for a user who returns mid-conversation.
 
-Session hygiene also protects the **5,000 active session workloads** quota — sessions
-stay Active until they expire, so a service that never stops sessions accumulates
-against the cap while paying for it. One fix, two problems.
+Session hygiene also protects the **active session workloads** quota — sessions stay Active
+until they expire, so a service that never stops sessions accumulates against the cap while
+paying for it. One fix, two problems.
+
+**Do not carry the number.** It is region-variant: 5,000 in us-east-1/us-west-2 but **2,500** in
+ap-northeast-2, ap-southeast-2 and eu-west-1 `[verified]`, and half is the more common value.
+Read the customer's region, and say whether the figure is the applied or the default limit:
+
+```bash
+aws service-quotas list-aws-default-service-quotas --service-code bedrock-agentcore \
+  --region <r> --query "Quotas[?contains(QuotaName,'Session')].[QuotaName,Value]"
+```
 
 ## AgentCore Memory: a requirement question, not a toggle
 
