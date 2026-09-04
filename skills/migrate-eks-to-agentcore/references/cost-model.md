@@ -6,10 +6,36 @@ Pod Identity) under 12 concurrent conversations, Sonnet 4.6 — or verified agai
 live Pricing and Service Quotas APIs. Where a number is reasoned rather than observed,
 it says so.
 
-## Start here: the question is wrong
+## Start here: check whether compute is material at all
+
+**Do this before opening the model.** On a real customer agent, measured end to end:
+
+| Line | Monthly |
+|---|---|
+| Bedrock tokens (28,049 in / 827 out per turn × 4.13 invocations) | **$12,000 – $29,000** |
+| Neptune `db.r6g.large` (untouched by migration) | **$240** ($290 in Seoul) |
+| **The entire EKS-vs-AgentCore compute delta being argued about** | **~$19** |
+
+The compute line was **0.04%–1.2% of that agent's run rate.** Everything below this section —
+the levers, the crossover, the endpoint arithmetic — was deciding about one part in a hundred.
+
+So the first output of a cost conversation is often: **"cost is not your deciding factor, and
+here is the arithmetic showing it."** That is a more valuable and more credible answer than a
+crossover figure, and it redirects the decision to operations and security where it belongs.
+
+Compute *is* material when: token spend is small (short prompts, cheap model, low volume), the
+cluster exists solely for this agent, or volume is high enough that node count dominates. Check
+which world you are in before modelling.
+
+**Always state the compute figure next to the token and datastore bill.** A compute comparison
+presented alone implies compute matters, and usually it does not.
+
+## Then: the question is still wrong
 
 "Is AgentCore cheaper than EKS?" has no stable answer. On one measured workload the
-verdict moves **22×** depending on two configuration choices:
+verdict moves **22×** depending on two configuration choices — and on a second, independently
+measured customer workload the same two choices moved it **13.4×**. The multiplier is a
+property of the workload's active-to-idle ratio, not of the platform. Measure theirs.
 
 | Configuration (100k conversations/mo) | AgentCore | EKS | Verdict |
 |---|---|---|---|
@@ -112,26 +138,41 @@ is the actionable part.
 Stated before the "not modelled" list because two of them are large enough to reverse the
 verdict, and both were missing from earlier versions of this file.
 
-**VPC interface endpoints — an AgentCore-only cost.** If the knowledge store is VPC-resident,
-`networkMode = "VPC"` is mandatory, and that needs interface endpoints for `bedrock-runtime`,
-`ecr.api`, `ecr.dkr`, `logs`, `xray`, `monitoring`, `ssm`, `sts`. Eight endpoints × 2 AZ ×
-$0.01/AZ-hour × 730h ≈ **$117/month**, before data processing. On EKS the pod already has an
-ENI in the VPC and needs **none** of them.
+**VPC interface endpoints — conditional on the VPC's egress design, NOT on the platform.**
 
-Against a tuned AgentCore figure of ~$6/month, that is a ~20× understatement. **For any
-customer with a private knowledge store, do not emit a cost verdict until the endpoint count
-is priced.** This is the archetype the skill calls the forcing function, and it is precisely
-where the naive comparison is most wrong.
+An earlier version of this file called these "an AgentCore-only cost … on EKS the pod already
+has an ENI in the VPC and needs **none** of them." **That is false**, and it was falsified on a
+real customer VPC: the VPC had no internet gateway, no NAT, and no `0.0.0.0/0` route anywhere,
+so running **EKS** there required `ecr.api`, `ecr.dkr`, `sts`, `logs`, `bedrock-runtime` and
+`eks-auth` before a single pod would start. Endpoints were a pre-existing air-gap cost, and
+migration added roughly **$0**.
 
-**NAT and ALB — EKS-only costs that migration removes.** ~$32/mo NAT + ~$17/mo ALB ≈
-**$49/month**, plus cross-AZ data. Excluding these understates the EKS side, i.e. it cuts
-*against* migrating. Earlier versions of this file omitted both while including a
-percentage-only mention of Spot savings, which flattered the EKS side on the small item and
-the AgentCore side on the large ones. Include all three with dollar magnitudes, or none.
+Probe it instead of assuming — one call:
 
-Adding NAT + ALB moves the crossover from ~56k to roughly **~94k conversations/month** on the
-measured workload — a 68% change in the number this file calls decision-useful. Treat the
-crossover as an order of magnitude, not a figure.
+```bash
+aws ec2 describe-route-tables --filters Name=vpc-id,Values=<vpc> \
+  --query 'RouteTables[].Routes[?DestinationCidrBlock==`0.0.0.0/0`]'
+```
+
+| VPC has internet egress | Endpoint cost is |
+|---|---|
+| Yes (IGW/NAT) | genuinely **AgentCore-only** if it moves to VPC mode. ~8 × AZs × $0.01/hr ≈ $117/mo in us-east-1 |
+| No (air-gapped) | **shared** — already paid for EKS. Migration adds ~$0, and may add only `xray`/`monitoring` for the ADOT sidecar |
+
+**NAT and ALB — EKS-only, if they exist.** ~$32/mo NAT + ~$17/mo ALB. On the customer VPC
+above there were **zero of each**, so this line was also wrong — in the opposite direction.
+
+That is the trap worth naming: applying both defaults uncritically produced a roughly correct
+total out of two individually false lines. **Count the customer's actual NAT gateways, load
+balancers and endpoints. Do not apply either default.**
+
+**Prices are region-variant too, not just quotas.** This file argues that quotas vary by region
+and then treats prices as fixed. Seoul is roughly **+30% on VPC endpoints, +21% on Neptune,
++13% on c6g**, and `c6a.large` is not offered there at all. Price in the customer's region.
+
+**EKS Auto Mode carries a per-instance management fee** (~$0.00918/hr on a large instance,
+about +12%) that earlier versions omitted — so the EKS side of the published comparison was
+understated.
 
 ## Not modelled
 

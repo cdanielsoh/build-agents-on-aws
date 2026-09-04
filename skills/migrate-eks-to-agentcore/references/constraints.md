@@ -38,7 +38,8 @@ mistake and it was made in an earlier version of this skill.
 | **Protocol** not HTTP / MCP / A2A / AG-UI | Front it with HTTP, or stay | `runtime-and-sessions.md` |
 | **Concurrency** past the session or creation-rate caps | Quota increase. **Lead time, not a wall** — raise it during assessment | `runtime-and-sessions.md` |
 | **Region** absent | Probe with `list-agent-runtimes`; published lists have been stale | `runtime-and-sessions.md` |
-| **Inbound auth method** — callers use SigV4, target is JWT | **Breaking.** See below | `identity.md` |
+| **Inbound auth: SigV4 today, JWT target** | **Breaking.** Coordinated caller cutover, or two runtimes. See below | `identity.md` |
+| **Inbound auth: NONE today** | **Not breaking — additive greenfield.** But it is simultaneously the highest-severity *current* gap. See below | `identity.md` |
 | **VPC-resident knowledge store** | Not a blocker, but forces VPC mode and a full endpoint set | `vpc-and-network-isolation.md` |
 
 ## The four that people get wrong
@@ -55,6 +56,18 @@ authorizer is configured. The authorizer is a property of the runtime, not the e
 service-to-service on EKS with Pod Identity) and the target is JWT, that is a coordinated
 cutover of every caller, or **two runtimes in parallel** with routing deciding who has
 moved. Belongs in Phase 1 of the plan, not Phase 3.
+
+**But check for the third case first, because it inverts this.** A service with **no inbound
+authentication at all** — internal ClusterIP, no Ingress, trusting the network — is common and
+was the case on the customer service assessed here. Then `CUSTOM_JWT` is **additive greenfield
+work, not a cutover**: there is no existing credential to migrate, and the migration framing is
+the opposite of breaking.
+
+It is also the highest-severity finding in the current system. On that service it was
+exploitable: replaying another conversation's `session_id` returned that conversation's content,
+because `session_id` is accepted verbatim from the caller and the `X-Employee-Id` header their
+own clients already send is never read. **Report that as a live vulnerability, not as a
+migration consideration.**
 
 → `deploy-on-agentcore/references/identity.md`
 

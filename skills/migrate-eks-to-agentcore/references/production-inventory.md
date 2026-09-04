@@ -127,7 +127,7 @@ can reshape the plan.
 |---|---|---|
 | **Inbound auth** | ALB OIDC / API GW authorizer / in-app JWT / **nothing** | **Migrate+ — BREAKING** |
 | **Outbound 2LO** (agent as itself) | client_credentials, static secrets, hand-rolled refresh | **Migrate+** → credential provider |
-| **Outbound 3LO** (agent as the user) | per-user OAuth tokens, a `user_tokens` table, PKCE/state/callback code | **Migrate+** → token vault. **Usually the largest single deletion available** |
+| **Outbound 3LO** (agent as the user) | per-user OAuth tokens, a `user_tokens` table, PKCE/state/callback code | **Migrate+** → token vault. Where it exists this is often the largest single deletion — but on the one customer service measured, **there was none at all**. Check before pitching it |
 | **Token propagation** | is the caller's identity carried to the tool, or does the tool trust the agent? | **Keep**, or move to a REQUEST interceptor |
 | **Workload identity** | a stable agent identity distinct from its IAM role? | **Delete** — Runtime issues one |
 
@@ -251,7 +251,7 @@ Conflating the tiers is the most common inventory error.
 
 | Component | Verdict |
 |---|---|
-| Conversation history / session store | **Delete** — the microVM holds it `[measured]` |
+| Conversation history / session store | **Delete** — the microVM holds it `[measured]`. **Ask for the item-size ceiling:** measured growth was ~7.6 KB/turn against DynamoDB's 400 KB item cap, i.e. a hard **~50-turn conversation limit** (~12 for tool-heavy turns). Many topology-A services have this and do not know it |
 | History compaction, conversation manager | **Keep** — context pressure is not platform-specific |
 | Flush cadence | **Regress** if they flush less often than every turn — `batch_size=1` is forced, so write volume and cost go up. **Neutral** if already every-turn |
 
