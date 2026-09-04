@@ -117,6 +117,10 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Set PostgreSQL RLS scope without leaking it         | `references/security.md`             |
 | Test that a security control actually works         | `references/security.md`             |
 | Pin container images so deploys are not silent no-ops | `references/cdk-infrastructure.md` |
+| **Run the agent in a VPC** / network isolation      | `references/vpc-and-network-isolation.md` |
+| Attach to an existing VPC (BYO-VPC)                 | `references/vpc-and-network-isolation.md` |
+| Answer "is everything inside our VPC?"              | `references/vpc-and-network-isolation.md` |
+| Reach a private target or private OIDC issuer       | `references/vpc-and-network-isolation.md` |
 | **Name any resource** (hyphen vs underscore, length limits) | `references/naming.md`        |
 | Pick a session ID that Runtime *and* Memory both accept | `references/naming.md`            |
 | Scope Memory namespaces by tenant                   | `references/naming.md`                |

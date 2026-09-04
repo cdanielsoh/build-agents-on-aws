@@ -246,6 +246,10 @@ class AgentRuntimeStack(Stack):
                     container_uri=f"{agent_repository.repository_uri}:{image_tag}"
                 )
             ),
+            # PUBLIC is the simple case. For network isolation use network_mode="VPC"
+            # with network_mode_config — and read
+            # references/vpc-and-network-isolation.md first, because two components in
+            # this file cannot be placed in a VPC at all.
             "network_configuration": bedrockagentcore.CfnRuntime.NetworkConfigurationProperty(
                 network_mode="PUBLIC"
             ),
