@@ -78,7 +78,7 @@ depth: quick | full
 
 gate0:
   - check: single_turn_duration        # see constraints.md for the gate list
-    result: pass | fail | needs_redesign
+    result: pass | fail | needs_redesign | unknown
     evidence: measured | verified | docs | reasoned | open
     note: <one line>
 
@@ -86,14 +86,31 @@ topology:
   detected: A_stateless | B_sticky | single_turn
   evidence: <file:line>
   event_loop_blocking: true | false | unknown
+  # A clean event loop is necessary and NOT sufficient. asyncio.to_thread uses the default
+  # executor, which in a 2-CPU container is 6 threads. See assessment.md.
+  executor_sized: true | false | unknown
+  measured_at_concurrency: [1, 6, 12]    # a single level produces a plausible, wrong record
   flush_cadence: every_turn | on_evict | interval | none
   concurrent_turn_safety: safe | last_write_wins | unknown
 
 measurements:
+  # Order-of-magnitude context is REQUIRED next to any compute verdict: on a real customer
+  # the compute delta was 0.04-1.2% of run rate, dominated by tokens and the datastore.
+  monthly_token_cost_estimate: { value: <usd>, evidence: measured | open }
+  monthly_datastore_cost: { value: <usd>, evidence: measured | open }
+  compute_share_of_run_rate: <pct>
+  tokens_per_turn: { input: <n>, output: <n>, invocations_per_turn: <n> }
   cpu_seconds_per_turn:  { value: <x>, evidence: measured | open }
   wall_seconds_per_turn: { value: <y>, evidence: measured | open }
-  peak_memory_gb:        { value: <z>, evidence: measured | open }
+  peak_memory_gb:        { value: <z>, evidence: measured | open, source: cgroup_memory_peak }
   turns_per_conversation: <n>
+
+# Endpoint cost is conditional on the VPC's egress design, not on the platform.
+network:
+  vpc_has_internet_egress: true | false | unknown   # describe-route-tables for 0.0.0.0/0
+  existing_nat_gateways: <n>
+  existing_load_balancers: <n>
+  existing_vpc_endpoints: [<service names>]
 
 economics:
   agentcore_default_monthly: <usd>
@@ -109,7 +126,10 @@ economics:
 inventory:
   - practice: AGENTSEC03
     component: outbound_3lo_oauth
-    state: present | absent | unknown
+    # Binary present/absent hid six real findings on a live assessment — a component
+    # that is thoroughly built and delivers nothing still reads as "present".
+    state: present | present_but_ineffective | absent | absent_by_design | not_applicable | unknown
+    effective: true | false | unknown     # required when state starts with "present"
     evidence: <file:line, or why unknown>
     verdict: migrate | migrate_plus | keep | delete | regress | stay | gap
     note: <one line>

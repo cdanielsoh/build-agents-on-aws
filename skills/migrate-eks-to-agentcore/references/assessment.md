@@ -118,15 +118,77 @@ Do not instrument if the data is already there.
 
 | Number | Where to look first |
 |---|---|
-| CPU per turn | Container Insights `pod_cpu_usage_total`, or `kubectl top` deltas ÷ turn count |
-| Wall per turn | existing traces, ALB target response time, app logs |
-| **Peak** memory | `kubectl top pods`, Container Insights `pod_memory_working_set`. **Peak, not average, and not the manifest limit** |
+| CPU per turn | cgroup v2 `/sys/fs/cgroup/cpu.stat` `usage_usec` deltas ÷ turns |
+| Wall per turn | their own request telemetry, existing traces, ALB target response time |
+| **Peak** memory | cgroup v2 `/sys/fs/cgroup/memory.peak` — a true monotonic high-water mark |
 | Concurrency | in-flight gauge if present; else ALB active connection count |
 | Turns per conversation | session store item stats, or conversation logs |
 
+**`kubectl top` cannot answer the memory question, and naming it here was wrong.** Measured
+against cgroup ground truth on a live pod: `kubectl top` reported **4m CPU while 8 conversations
+were in flight**, repeated a stale value for four consecutive samples (18s), and its best memory
+reading was **3.7% below the true peak**. It is a ~60s-window average sampled on a delay.
+
+Use the cgroup files, read from inside the container:
+
+```bash
+kubectl exec -n <ns> <pod> -- sh -c 'cat /sys/fs/cgroup/memory.peak; grep usage_usec /sys/fs/cgroup/cpu.stat'
+```
+
+`memory.peak` is exactly the quantity AgentCore bills on — a high-water mark that never decays
+— so it is not merely more accurate, it is the *right* metric. Subtract measured idle drift from
+the CPU delta (an idle replica drew ~3.6 millicores).
+
+Container Insights is listed in a lot of guidance as the first stop; on the customer cluster it
+**was not enabled**, so plan for the cgroup fallback rather than assuming it.
+
 If instrumentation is needed, the minimum is three counters: process CPU
-(`resource.getrusage`), summed request wall time, and an in-flight gauge. That answers the
-cost question.
+(`resource.getrusage`), summed request wall time, and an in-flight gauge.
+
+## Measure across a concurrency sweep, never at one level
+
+Non-negotiable, and the single most important addition to this method. Every important finding
+on the customer's agent required at least three load levels; one level would have produced a
+plausible and wrong record.
+
+Measured on their agent, session-store fetch p50:
+
+| Concurrency | Store fetch p50 | Per-pod throughput |
+|---|---|---|
+| 1 | 3.7 ms | — |
+| 6 | 4.7 ms | 0.397 turns/s |
+| 12 | **2,491 ms** (p90 9,487 ms) | **0.326 turns/s** — throughput *inverts* |
+
+A ~670× degradation, invisible at c=1 and c=6. Any per-turn number taken at low concurrency is
+not the production number.
+
+### The cause, and why no code read or Kubernetes metric finds it
+
+Their event loop is clean — every blocking call correctly wrapped in `asyncio.to_thread`, which
+both a code review and this method's greps credited them for. But **`asyncio.to_thread` uses the
+default executor**, and inside a 2-CPU container `ThreadPoolExecutor()._max_workers` is
+`min(32, cpu_count + 4)` = **6**. Twelve concurrent turns queue behind six threads.
+
+`event_loop_blocking: true|false` is therefore the wrong question — a clean loop is necessary
+and not sufficient. Check executor sizing explicitly:
+
+```bash
+kubectl exec -n <ns> <pod> -- python -c \
+  "import os,concurrent.futures as f; print('cpus',os.cpu_count(),'threads',f.ThreadPoolExecutor()._max_workers)"
+```
+
+Record it as `executor_sized` in the decision record alongside `event_loop_blocking`. It was the
+largest measured defect in that codebase, it is a few lines to fix, and it improves the current
+service as much as the migrated one.
+
+### Two more findings that only a sweep produces
+
+- **The rebuild-vs-fetch ratio is not a constant.** This plugin states ~8.5× (rebuild dominates).
+  Measured: **17× at c=1**, then it **inverts at c=12** (fetch 2,491 ms vs rebuild 147 ms). It is
+  a function of concurrency, so "optimise the rebuild, not the store" is only true unloaded.
+- **CPU-based HPA is unusable, with a number.** Under 8-way concurrent load the pod drew
+  **179m against a 1000m limit — 17.9%** — while store latency was already collapsing. An HPA
+  targeting 70% never fires. This is the concrete version of the claim.
 
 **Measure in-cluster, in-region.** Local measurement of the reference gave 1,048 ms of
 apparent store I/O; in-cluster it was 11.5 ms. The difference was internet latency and

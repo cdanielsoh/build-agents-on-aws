@@ -71,6 +71,13 @@ increases applied.
 The 15-minute timeout is the one to design around: a turn that can exceed it must become
 an async background task reporting `HealthyBusy` from `/ping` and polled separately.
 
+**There is a second non-adjustable ceiling** that is easy to miss: `Streaming maximum duration`
+(`L-C91AC63F`) at 60 minutes. A long-lived SSE or WebSocket stream is bounded by it even when
+individual requests stay under 15 minutes.
+
+Note also what is **absent** from Service Quotas: there is no per-session CPU or memory quota, so
+per-session resource sizing cannot be verified through the quota API.
+
 **Region availability: probe, do not trust a list.** Confirmed present in `us-east-1`,
 `us-west-2`, `ap-northeast-1`, `ap-northeast-2`, `eu-central-1`, `eu-west-1`,
 `ap-southeast-2` via `list-agent-runtimes`. Widely-repeated material still claims four
