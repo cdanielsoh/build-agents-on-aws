@@ -2,9 +2,55 @@
 
 AgentCore Memory provides persistent conversation memory across sessions. It automatically extracts preferences, facts, and summaries from conversations.
 
+## Short-Term Only: Omit `memory_strategies`
+
+`memory_strategies` is optional, and leaving it off is the entire difference between
+short-term and long-term memory:
+
+| | Short-term (no strategies) | Long-term (strategies) |
+|---|---|---|
+| Stored | Raw conversation events | Events **plus** extracted records |
+| Survives `event_expiry_duration` | Nothing | The records |
+| Extraction cost / latency | None | Per-turn LLM extraction |
+| IAM needed | Event APIs + `GetMemory` | Event APIs + the four record APIs |
+
+```python
+memory = bedrockagentcore.CfnMemory(
+    self, "AgentMemory",
+    name="my_agent_memory",
+    description="Short-term conversation memory (raw events, no extraction).",
+    event_expiry_duration=30,
+    # No memory_strategies. That is the switch.
+)
+```
+
+Verify on the deployed resource rather than trusting the template —
+`get-memory` should report `"strategies": []` and `"status": "ACTIVE"`:
+
+```bash
+aws bedrock-agentcore-control get-memory --memory-id <id> \
+  --query 'memory.{status:status,strategies:strategies}'
+```
+
+Scope the runtime role to match. Short-term needs only:
+
+```python
+actions=[
+    "bedrock-agentcore:GetMemory",      # session manager resolves config at startup
+    "bedrock-agentcore:CreateEvent", "bedrock-agentcore:GetEvent",
+    "bedrock-agentcore:ListEvents", "bedrock-agentcore:DeleteEvent",
+    "bedrock-agentcore:ListSessions", "bedrock-agentcore:ListActors",
+]
+```
+
+Adding strategies later needs `RetrieveMemoryRecords`, `ListMemoryRecords`,
+`GetMemoryRecord`, and `DeleteMemoryRecord` on top. **No agent code changes either
+way** — `AgentCoreMemorySessionManager` uses whatever the memory resource declares,
+so short-term first and strategies later is a pure infrastructure change.
+
 ## Memory Strategies
 
-Configure three strategy types in CDK:
+For long-term memory, configure strategy types in CDK:
 
 ```python
 memory = bedrockagentcore.CfnMemory(
@@ -49,6 +95,13 @@ Namespaces use `{actorId}` and `{sessionId}` placeholders:
 | Preferences | `/users/{actorId}/preferences` | Cross-session, per-user |
 | Facts | `/users/{actorId}/facts` | Cross-session, per-user |
 | Summaries | `/summaries/{actorId}/{sessionId}` | Per-session, per-user |
+
+**The placeholder set is closed.** Only `{actorId}`, `{sessionId}`, and
+`{memoryStrategyId}` are permitted — `{userId}`, `{tenantId}`, or anything else fails
+validation against `[a-zA-Z0-9\-_\/]*(\{(actorId|sessionId|memoryStrategyId)\}[a-zA-Z0-9\-_\/]*)*`.
+To scope by tenant, use a literal prefix (`/tenants/acme/{actorId}/facts`) or encode
+the tenant into the actor ID. Strategy `name` follows the 48-character
+underscores-only rule; see [naming.md](naming.md).
 
 ## Actor ID from JWT
 
