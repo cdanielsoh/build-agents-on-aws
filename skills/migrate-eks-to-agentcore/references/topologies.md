@@ -38,6 +38,28 @@ platform. On B, you.
 That is a real and substantial argument. It does not need exaggeration, and a skeptical
 customer will take the A-vs-C version apart.
 
+## First, a pre-check: is a unit of work a user *turn*?
+
+Ask this before classifying, because the taxonomy below assumes conversational traffic and will
+confidently mis-classify a batch service — every topology-A signature matches a long-running job
+that checkpoints to a store, and then every A verdict is wrong.
+
+**Fourth point: long-running resumable job.** A unit of work is a document, a dataset or a task,
+not a turn. Signals: a loop over work items rather than a request handler; checkpoint/resume
+keyed on a job id; `terminationGracePeriodSeconds` in the hundreds; no conversation history.
+
+For that shape the A verdicts invert:
+
+| A verdict | Reality for a batch job |
+|---|---|
+| "delete the store, it is per-turn overhead" | **the store IS the reliability mechanism** — it is the resume point when the pod dies |
+| "removes ~110ms/turn of rebuild" | there is no per-turn rebuild; the agent is built once per job |
+| "risk: low, also a latency improvement" | deleting the checkpoint store removes crash recovery |
+
+The schema fields inherit the bug too: `flush_cadence`, `concurrent_turn_safety` and
+`turns_per_conversation` all make the record read as a chat agent. Record
+`work_unit: turn | job | document` first and let it gate the rest.
+
 ## Detecting which one they run
 
 **Topology A signatures**

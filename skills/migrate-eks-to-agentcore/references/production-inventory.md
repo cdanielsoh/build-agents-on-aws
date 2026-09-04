@@ -32,7 +32,11 @@ So:
 **Verdicts** — **Migrate** (moves unchanged) · **Migrate+** (moves, needs work) ·
 **Delete** (platform replaces it) · **Keep** (yours on either platform) ·
 **Regress** (worse on AgentCore — size the loss) · **Stay** (should not move) ·
-**Gap** (absent; decide if in scope)
+**Gap** (absent, and it should not be) · **Correctly-absent** (absent by design — say so)
+
+`Correctly-absent` matters: forcing a deliberate absence into `Gap` manufactures a finding, and
+forcing it into `Keep` hides that it was considered. A single-turn service has no session store
+and needs none; a graph with no per-user data needs no retrieval ACL.
 
 `Regress` and `Stay` exist because without them the instrument can only ever conclude
 "migrate or neutral." If you never record one, suspect the instrument rather than the
@@ -251,7 +255,7 @@ Conflating the tiers is the most common inventory error.
 
 | Component | Verdict |
 |---|---|
-| Conversation history / session store | **Delete** — the microVM holds it `[measured]`. **Ask for the item-size ceiling:** measured growth was ~7.6 KB/turn against DynamoDB's 400 KB item cap, i.e. a hard **~50-turn conversation limit** (~12 for tool-heavy turns). Many topology-A services have this and do not know it |
+| Conversation history / session store | **Delete** — the microVM holds it `[measured]`. **Two size ceilings, and AgentCore's is the tighter one:** `Message size` = **9 KB, non-adjustable** (`L-1D35AE05`) per Memory event, versus DynamoDB's 400 KB item. 44× smaller, on the target platform — so a service storing large tool results in history hits it. **Ask for the item-size ceiling:** measured growth was ~7.6 KB/turn against DynamoDB's 400 KB item cap, i.e. a hard **~50-turn conversation limit** (~12 for tool-heavy turns). Many topology-A services have this and do not know it |
 | History compaction, conversation manager | **Keep** — context pressure is not platform-specific |
 | Flush cadence | **Regress** if they flush less often than every turn — `batch_size=1` is forced, so write volume and cost go up. **Neutral** if already every-turn |
 

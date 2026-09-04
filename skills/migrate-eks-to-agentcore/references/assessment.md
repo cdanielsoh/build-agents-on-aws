@@ -18,6 +18,29 @@ which costs the trust the whole engagement depends on.
 
 Only the last row is a question. Everything above it is work.
 
+## Two things to establish before anything else
+
+**Is there a running deployment you can reach?** If not — the common pre-engagement case —
+then **Gate 2 is unavailable, full stop.** Every measurement is `open`, the concurrency sweep
+below cannot be run, and the correct output is `cost_confidence: unavailable`. Say that at the
+start rather than letting an assessor discover it three steps in and reach for this plugin's
+reference figures to fill the hole. A repo-only assessment is still valuable — Gate 0 and the
+inventory are most of the findings — it just cannot price anything.
+
+**Whose account are you in?** Run `aws sts get-caller-identity` and compare it to the
+customer's account id. If they differ:
+
+- `list-service-quotas` returns **your** applied values, not theirs. Record only
+  `list-aws-default-service-quotas` output, tagged `[verified: defaults only]`, and mark every
+  applied value `open (wrong account)`.
+- Every `describe-vpc-*`, `describe-route-tables` and ECR/Budgets read describes *your*
+  infrastructure. Running them and recording the result produces a confident wrong answer —
+  the worst failure mode available here.
+- Region availability and prices are account-independent, so those remain valid.
+
+This matters because this file elsewhere insists on applied-vs-default. From outside the
+account that instruction actively causes the error it was written to prevent.
+
 ## Reading the repo
 
 Read **shape, not craft.** A working vibe-coded service is the normal input; grading quality
@@ -79,11 +102,50 @@ grep -rniE 'idempot|dedup|request_id' --include='*.py'
 grep -rln 'streamable_http\|FastMCP\|/mcp' --include='*.py' --include='*.yaml'
 
 # Evals (AGENTOPS06) — absence limits what Phase 2 can claim
-ls -d test* eval* 2>/dev/null; grep -rln 'strands_evals\|golden\|expected_response' --include='*.py'
+ls -d test* eval* 2>/dev/null || true; grep -rln 'strands_evals\|golden\|expected_response' --include='*.py' .
 
 # Prompt lifecycle (AGENTOPS02) — versioned files, or inline strings edited in place?
 grep -rln 'system_prompt\|SYSTEM_PROMPT' --include='*.py'; ls -d prompts/ 2>/dev/null
 ```
+
+### The dead-control sweep — negative signal, and it outperforms the greps
+
+Every grep above is **positive signal**: it finds a component that exists. On two independent
+assessments the highest-severity findings were all *negative* signal, and no grep above could
+have found any of them:
+
+- a `requires_human_approval()` function with **zero call sites**, while three comments and a
+  prompt claimed destructive actions were gated
+- a `DESTRUCTIVE_TOOLS` constant naming two tools **that were never built**, omitting the one
+  that was
+- a cache key omitting a `tenant_id` **already in scope two lines above**
+- a tool declaring a `query` parameter and **never referencing it in the body** — every call
+  silently returned the same rows
+- an `IDLE_EVICT_SECONDS` constant that was **dead code**; no eviction ran
+
+So sweep for controls that exist and do nothing:
+
+```bash
+# Symbols whose name claims a safety/tenancy/approval role — then check call sites
+grep -rnE 'def [a-z_]*(approve|approval|redact|guard|sanitiz|validat|authori[sz]|scope|tenant|budget|limit)[a-z_]*' --include='*.py' .
+# For each hit, count call sites. Zero (beyond the definition) is a finding:
+grep -rn '<symbol>' --include='*.py' . | grep -v 'def <symbol>'
+
+# Declared tool parameters never used in the body
+grep -rn -A25 '@tool' --include='*.py' .   # then read each: is every parameter referenced?
+
+# Constants that name things, and whether those things exist
+grep -rnE '^[A-Z_]+ *= *[{\[]' --include='*.py' .
+
+# Modules imported but absent — an unbuildable tree blocks half an assessment
+python3 -m compileall -q . 2>&1 | head
+grep -rhoE '^from \.[a-z_.]+ import|^from [a-z_.]+ import' --include='*.py' . | sort -u
+```
+
+The last one matters more than it looks: on three of five assessed services a module was
+imported and did not exist, which meant the image was built from a different tree than the one
+under version control. That single fact blocked inbound-auth classification, flush cadence and
+event-loop hygiene at once — one cause, many `unknown`s.
 
 ## Probing AWS — verify, never recall
 
@@ -170,16 +232,45 @@ default executor**, and inside a 2-CPU container `ThreadPoolExecutor()._max_work
 `min(32, cpu_count + 4)` = **6**. Twelve concurrent turns queue behind six threads.
 
 `event_loop_blocking: true|false` is therefore the wrong question — a clean loop is necessary
-and not sufficient. Check executor sizing explicitly:
+and not sufficient.
+
+### First: which pool is even in play?
+
+The earlier version of this section prescribed one probe and it was **wrong for most services**.
+Branch on the handler style:
+
+| Handler | Concurrency is bounded by | Default |
+|---|---|---|
+| `async def` + `asyncio.to_thread` | asyncio's default `ThreadPoolExecutor` | `min(32, cpu_count + 4)` |
+| **plain `def`** (FastAPI/Starlette) | **anyio's capacity limiter** | **40** |
+| no web framework (batch, gRPC worker) | whatever the code sets explicitly | read it |
+
+A service with **no `async def` at all** has no event loop to block — record
+`event_loop_blocking: not_applicable`, not `false`, because `false` reads as a clean bill of
+health for a check that never applied.
 
 ```bash
-kubectl exec -n <ns> <pod> -- python -c \
-  "import os,concurrent.futures as f; print('cpus',os.cpu_count(),'threads',f.ThreadPoolExecutor()._max_workers)"
+# Which pools exist, and what actually bounds them
+kubectl exec -n <ns> <pod> -- python -c "
+import os, concurrent.futures as f
+print('cpu_count()      ', os.cpu_count(), '  <- HOST cpus, not your cgroup limit')
+print('cgroup cpu.max   ', open('/sys/fs/cgroup/cpu.max').read().strip())
+print('asyncio executor ', f.ThreadPoolExecutor()._max_workers)
+try:
+    import anyio.to_thread as a
+    print('anyio limiter    ', a.current_default_thread_limiter().total_tokens)
+except Exception as e:
+    print('anyio limiter     n/a', e)
+"
 ```
 
-Record it as `executor_sized` in the decision record alongside `event_loop_blocking`. It was the
-largest measured defect in that codebase, it is a few lines to fix, and it improves the current
-service as much as the migrated one.
+**`os.cpu_count()` reports the host's CPUs, not `limits.cpu`.** So the asyncio pool on a
+1-CPU-limited pod on a 64-core node is sized 36, not 5 — the derived number is meaningless
+without `cpu.max`. Read both.
+
+Record `executor_sized` alongside `event_loop_blocking`. On the one customer service where this
+was measured it was the largest defect in the codebase, it is a few lines to fix, and it improves
+the current service as much as the migrated one.
 
 ### Two more findings that only a sweep produces
 
@@ -216,14 +307,29 @@ Two more that are product questions rather than architecture, and that decide re
 - **How does a conversation end?** — decides whether `StopRuntimeSession` is implementable,
   which is the top cost lever
 
-## Confidence, and saying "I don't know"
+## Confidence — two axes, not one
 
-Set `confidence` honestly in the record:
+Earlier versions had a single `confidence` keyed to measurement completeness. That is a
+**cost**-confidence rubric, and applying it to the recommendation produced actively harmful
+output: a `stay` resting on a hard platform ceiling, or a `redesign_first` resting on a
+`file:line` credential leak, both had to report `low` — sitting next to a near-certainty and
+undermining it. Record both:
 
-- **high** — topology detected from code, all four measurements taken on their workload, no
-  unresolved blockers, most Lens practices assessed
-- **medium** — measurements partial or extrapolated, or topology ambiguous
-- **low** — no measurements; the verdict rests on structure alone
+**`recommendation_confidence`** — how sure are you of migrate/stay/redesign?
+- **high** — a Gate 0 outcome, or a topology and blocker read that measurement cannot overturn.
+  Measuring CPU-per-turn does not un-break a 9-hour session against an 8-hour ceiling
+- **medium** — the structural read is clear but a Gate 3 answer could move it (shared cluster,
+  compliance constraint)
+- **low** — structure is ambiguous, or key artifacts are missing from the repo
+
+**`cost_confidence`** — how sure are you of the economics?
+- **high** — all four numbers measured on their workload, across a concurrency sweep
+- **medium** — partial or extrapolated
+- **low / unavailable** — nothing measured. Then say **"the cost verdict is unavailable"**, not
+  "probably cheaper", and quote none of this plugin's reference figures as theirs
+
+The two are frequently far apart, and saying so is more useful than averaging them into one
+misleading word.
 
 At `low`, say plainly that the cost recommendation is unavailable and name the measurement
 that would change it. **A recommendation presented at unearned confidence is the failure mode
