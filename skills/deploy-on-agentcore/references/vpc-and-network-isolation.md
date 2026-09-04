@@ -89,6 +89,23 @@ until timeout:
 Use a **gateway** endpoint for S3, not an interface endpoint: it is free, where an
 interface endpoint bills per-AZ-hour plus per-GB.
 
+**Three more, conditional on what the agent does.** The base list above covers a single agent
+that calls a model and nothing else; each of these was missed once and produced the hang below:
+
+| Endpoint | Needed when | Verified |
+|---|---|---|
+| `bedrock-agent-runtime` | the agent retrieves from a **Bedrock Knowledge Base** (`Retrieve`, `RetrieveAndGenerate`). Distinct service from `bedrock-runtime` — having one does not give you the other | `com.amazonaws.us-east-1.bedrock-agent-runtime` `[verified]` |
+| `bedrock-agentcore` | **one runtime invokes another** (`InvokeAgentRuntime`) — the supervisor/specialist split. Already in the base list for Memory, so check it is present rather than assuming a Memory-free agent does not need it | `com.amazonaws.us-east-1.bedrock-agentcore` `[verified]` |
+| `eks-auth` | EKS Pod Identity is in play on the same VPC. Pod Identity calls `eks-auth:AssumeRoleForPodIdentity`, **not** STS, so an `sts` endpoint does not cover it | `[measured:reference]` — diagnosed as a `500 ... []` from the credential helper |
+
+Enumerate the real names before writing the stack; do not derive them from the SDK client
+name. One call:
+
+```bash
+aws ec2 describe-vpc-endpoint-services --region <r> \
+  --query 'ServiceNames[?contains(@,`bedrock`)]' --output text | tr '\t' '\n'
+```
+
 The failure mode is the important part. A missing endpoint does not fail the deploy —
 it fails the agent at runtime, as a hang with nothing in the logs naming what was
 unreachable. Assert the set in a test.

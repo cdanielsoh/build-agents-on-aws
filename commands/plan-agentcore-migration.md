@@ -71,6 +71,12 @@ common.
 Echo back topology, `work_unit`, verdict counts, any `regress`, and dissent, so a stale record
 is caught before it produces a plan.
 
+**Read the fields the schema does not define.** Assessors add blocks of their own —
+free-text rationale, a critique of the assessment itself, notes hung off `lens_coverage`.
+Observed: a record whose sharpest planning input was a comment inside another field, and one
+whose Phase-0 list existed only inside the `recommendation` prose. Skipping what the template
+does not name loses exactly the parts the assessor thought worth writing by hand.
+
 ## Step 2 — Order the work by reversibility
 
 Cheap and reversible first. Each phase must be independently valuable, so the customer can stop
@@ -97,13 +103,37 @@ top the list:
 
 - **structured request logging, if absent** — frequently one change that closes several audit
   and attribution gaps *and* unblocks Gate 2 measurement
+- **pinned, hash-locked dependencies, if absent** — not glamorous, and it is a *prerequisite*
+  rather than an improvement: until the build is reproducible, no later phase is a controlled
+  experiment and no parallel run proves anything. Resolve them inside the target platform
+  (`linux/arm64` if you are rebuilding for microVMs), and do not hand-write version numbers —
+  a plausible-looking pin you did not resolve is a guess that reads as authoritative
 - **an arm64 NodePool**, if you are rebuilding for ARM64 and the cluster runs EKS Auto Mode —
   its `general-purpose` pool is amd64-only, so "runs on Graviton today" is false by default
 
 **Phase 1 — parallel runtime, no traffic.** Same image behind `BedrockAgentCoreApp`, invoked
 directly, answers compared against the EKS service. Fully reversible: delete the runtime.
 
+**"Fully reversible" holds only while nothing calls it — which for a multi-component service
+means only the components nothing else calls.** In a supervisor/specialist split, moving a
+specialist forces a code change *and* a new IAM grant on a live caller, so it is not Phase 1
+work. Migrate **leaves first**, keep Phase 1 strictly out-of-band (you invoke the runtime with
+your own credentials, nothing in the service knows it exists), and push the first caller change
+into Phase 2 where a rollback path is already required.
+
 **Phase 2 — shadow traffic.** Mirror a sampled share of real requests; discard the responses.
+
+**Discarding the response does not discard the side effects, and "no user impact" is not the
+same claim.** A mirrored turn runs the agent's tools for real: a mirrored conversation against a
+supervisor really delegates, and a mirrored analytics turn starts a real query against a shared,
+account-limited service and holds a worker for its duration. Before mirroring, list every tool a
+sampled request can reach and say which are idempotent **in resource consumption**, not just
+free of writes — read-only is not the test. Where they are not, mirror against a load-test
+tenant or do not mirror.
+
+Also check the sampled share against the **session** quota, not the request rate: with N
+runtimes behind a supervisor, one mirrored conversation consumes N concurrent session workloads,
+so a "1% shadow" is 1% × N.
 
 **Name the mirroring point explicitly, and treat "there isn't one" as a real outcome.** A
 ClusterIP service with no ingress and no mesh — typical of internal tools — has nowhere to
@@ -111,6 +141,16 @@ mirror from. Then Phase 2 relocates into the *caller*, which may be a different 
 different team. Say that rather than writing a phase nobody can execute.
 
 **Phase 3 — cutover.** Customer-driven, on their sign-off.
+
+**With more than one component, cutover has an order and a steady state, and both need writing
+down.** Move them one at a time; **mixed mode is where the service lives for weeks, not a moment
+it passes through.** Two rules that make per-component rollback actually independent:
+
+- **Both call paths stay open until Phase 4.** If the old path is removed when a component
+  cuts over, reversing the supervisor forces reversing every specialist under it — the rollbacks
+  stop being independent exactly when you need them most.
+- **Cut over in the same order you migrated: leaves first, callers last.** The caller can then
+  be reverted without stranding anything.
 
 **Do not start Phase 3 without a numeric rollback trigger.** Error rate, p95, cost/day, and the
 name of who pulls it. If those are `open` in the record, say plainly that Phase 3 cannot begin
@@ -167,7 +207,12 @@ the second of which gates Gate 2 by construction. Write to new paths; never over
 files.
 
 - **AgentCore entrypoint** — reuse their existing agent construction unchanged; the point is
-  that only the surface differs. **Do not name it `app.py` if a package or module of that name
+  that only the surface differs. **That thesis fails for a multi-agent service**, and it fails
+  quietly because it still holds for most of the components: when a supervisor delegates to
+  specialists, the delegation transport is part of the **tool set**, not the serving surface.
+  Moving a specialist to its own runtime rewrites the supervisor's tools from in-process calls to
+  `InvokeAgentRuntime`. Say that in the plan instead of scaffolding a surface swap and calling
+  the agent unchanged. **Do not name it `app.py` if a package or module of that name
   already exists.** Verified failure: a root `app.py` beside an `app/` directory without
   `__init__.py` shadows it, and `from app.agent import ...` raises
   `ModuleNotFoundError: No module named 'app.agent'; 'app' is not a package`. Name it
@@ -182,12 +227,16 @@ files.
   The build stack is not optional: it is how you get an arm64 image without local tooling and
   how you get a content-addressed tag. A mutable tag makes a later deploy a silent no-op. See
   `cdk-infrastructure.md` and `naming.md`.
-- **Network** — if the knowledge store is VPC-resident, `networkMode = "VPC"` plus the full
-  endpoint set (`bedrock-runtime`, `ecr.api`, `ecr.dkr`, S3 **gateway**, `logs`, `xray`,
-  `monitoring`, `ssm`, `sts`, and `eks-auth` if Pod Identity is in play). A missing endpoint
-  hangs the agent at runtime with nothing in the logs naming it — assert the set in a test.
-  **If it is not VPC-resident, assert `PUBLIC` in a test**, so a later switch cannot land
-  without the endpoints.
+- **Network** — `networkMode = "VPC"` if **any** dependency is VPC-resident, plus the endpoint
+  set from
+  [vpc-and-network-isolation.md](../skills/deploy-on-agentcore/references/vpc-and-network-isolation.md).
+  **Read it rather than reproducing the list here** — the copy that used to sit in this bullet
+  went stale twice, and it omitted `bedrock-agent-runtime`, so following it exactly produced the
+  silent hang the same sentence warns about. Ask *which* dependency forces VPC mode, because it
+  is often not the one you expect: a Bedrock Knowledge Base is regional and needs no VPC, while
+  the session cache beside it does — so the network design is downstream of the **memory**
+  decision, not the retrieval one. Assert the set in a test. **If nothing is VPC-resident, assert
+  `PUBLIC` in a test**, so a later switch cannot land without the endpoints.
 - **Session lifecycle** — implement `StopRuntimeSession` where the record recommends it, as
   code and not a comment. Where the record shows the cost/latency tension (stopping sessions
   versus warm reuse), make it one switch with the trade documented at the switch.
