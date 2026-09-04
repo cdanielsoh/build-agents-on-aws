@@ -238,6 +238,22 @@ class AgentRuntimeStack(Stack):
         # — including the ECR stack you have to deploy first to have anywhere to push.
         # That deadlocks a first deploy, and the traceback points at the runtime stack
         # while the command you ran named a different one.
+        #
+        # The same root cause has a nastier second form. If context decides whether a
+        # stack is *created at all* —
+        #
+        #     if app.node.try_get_context("routing_domain"):
+        #         GatewayStack(app, "gateway", ...)
+        #
+        # — then any later `cdk deploy` that omits the flag synthesizes an app with no
+        # gateway stack, concludes the exports it consumed are now unused, and tries to
+        # remove them:
+        #
+        #     Cannot delete export my-network:ExportsOutput...ResourceGatewaySg... as it
+        #     is in use by my-gateway
+        #
+        # which rolls the *network* stack back over a change you made somewhere else.
+        # If you must gate a stack on context, pass that context on every invocation.
 
         runtime_config = {
             "agent_runtime_name": "my_agent_runtime",
@@ -677,6 +693,11 @@ class BackendStack(Stack):
             cluster=cluster, task_definition=task_def,
             desired_count=1, assign_public_ip=True,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+            # Always set this. Without a circuit breaker, a task that cannot start —
+            # bad image, missing env var, crash on boot — takes up to THREE HOURS to
+            # fail the deployment, and `cdk deploy` just sits there looking slow. CDK
+            # warns about it, and the warning is worth obeying.
+            circuit_breaker=ecs.DeploymentCircuitBreaker(enable=True, rollback=True),
         )
 
         listener.add_targets(
