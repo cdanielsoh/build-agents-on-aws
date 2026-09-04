@@ -66,8 +66,8 @@ what cannot be derived — data residency, compliance, team depth, roadmap.
 | `[measured:reference]` | Observed on this plugin's reference build — **n=1 agent**. Illustrates shape, never their number |
 | `[read:source]` | **Read in their repo at `file:line`.** Most of a pre-deployment assessment is this |
 | `[stated:customer]` | Asserted by the customer — a README, a ticket, a conversation. Often the only source for volume and spend, and not independently checkable |
-| `[verified]` | Queried from a live AWS API (Service Quotas, Pricing, SDK) — **in their account, or say whose** |
-| `[docs]` | Stated in AWS documentation, not independently confirmed |
+| `[verified]` | Queried from a live AWS API (Service Quotas, Pricing, SDK) — **in their account, or say whose**. For a quota, also say **applied or default**: `2500 [verified: default, eu-west-1]`. Bare `[verified]` on a number that exists in both flavours leaves the reader unable to tell whose limit it is |
+| `[docs]` | **AWS** documentation. Not their README — that is `[stated:customer]`, and mislabelling it presents a mid-range guess from an 8-line file as a documented fact |
 | `[reasoned]` | Follows from the above — argument, not observation |
 | `[open]` | Not established. Say so; do not fill the gap |
 

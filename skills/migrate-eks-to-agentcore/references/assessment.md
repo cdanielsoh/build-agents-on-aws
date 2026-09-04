@@ -100,6 +100,10 @@ grep -rniE 'idempot|dedup|request_id' --include='*.py'
 
 # Self-hosted MCP servers (AGENTOPS04)
 grep -rln 'streamable_http\|FastMCP\|/mcp' --include='*.py' --include='*.yaml'
+# Then: does each have a build definition HERE? On a real repo two MCP servers ran as separate
+# Deployments on pinned tags, and the only Dockerfile copied just the main service — so a patch
+# planned against them had no tree to apply to. Diff manifest images against what you can build:
+grep -rhoE 'image: *[^ ]+' --include='*.yaml' . | sort -u; ls Dockerfile* */Dockerfile* 2>/dev/null
 
 # Evals (AGENTOPS06) — absence limits what Phase 2 can claim
 ls -d test* eval* 2>/dev/null || true; grep -rln 'strands_evals\|golden\|expected_response' --include='*.py' .
@@ -122,6 +126,14 @@ have found any of them:
 - a tool declaring a `query` parameter and **never referencing it in the body** — every call
   silently returned the same rows
 - an `IDLE_EVICT_SECONDS` constant that was **dead code**; no eviction ran
+- a token-refresh path indexing `tok["refresh_token"]`, which **RFC 6749 §5.1 makes optional**
+  on a refresh response and many IdPs omit. `KeyError` → unhandled 500, on the one path a long
+  conversation is guaranteed to reach. The record documented the *missing* refresh flow in
+  detail and never checked whether the existing one worked
+
+That last one generalises: **the sweep finds controls that do nothing, but also read the ones
+that do something for assumed-present fields.** Any `d["key"]` on a response from an external
+protocol is worth one look at whether the spec makes that key optional.
 
 So sweep for controls that exist and do nothing:
 
