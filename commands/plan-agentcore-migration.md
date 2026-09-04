@@ -184,6 +184,15 @@ R5 is the point of the whole structure: `redesign_first` usually means the recor
 enough to recommend anything, so the plan's deliverable is a **better record**, not a migration.
 Say that plainly — the customer is buying a decision, and this plan defers it on purpose.
 
+**An `unknown` gate does not block the R-phases.** Step 1's "do not plan past Phase 0" governs
+the *migration* phases, because those commit to a platform an unevaluated gate might rule out.
+R0–R5 commit to nothing and exist precisely to resolve unknowns, so plan all of them. `unknown`
+gates belong in R0's recovery list and in R5's re-assessment inputs.
+
+**`StopRuntimeSession` has nowhere to live here.** Step 3 says implement it as code, but a
+redesign produces no runtime to call it on. Record it as an R5 input — one of the things the
+re-assessment must decide — rather than scaffolding a call into a file nothing invokes.
+
 Each R-phase still needs the Step 2 fields: goal, steps, verification, rollback, owner, `[open]`.
 Order them with Step 2's tie-break, since reversibility will not separate them.
 
@@ -273,8 +282,27 @@ comparable across engagements:
 ```
 <out>/plan.md              the phased plan
 <out>/scaffold/            generated files, mirroring the target repo layout
-<out>/scaffold/MANIFEST.md every generated file, its purpose, and the record line it traces to
+<out>/scaffold/MANIFEST.md both indexes, below
 ```
+
+**`MANIFEST.md` needs the reverse index, not just the forward one.** Artifact → record line
+catches invention. It cannot catch *omission* — and omission is the failure that actually
+happened: one plan left three `gap` rows and the single `migrate` row untouched, and skipped a
+`severity: high` finding entirely, while its summary claimed thirteen high-severity findings
+closed. Nothing in the artifact list was wrong; the list simply ended.
+
+So require both directions, and make the second one exhaustive:
+
+| Index | Row per | Catches |
+|---|---|---|
+| artifact → record line | each generated file | scaffolding invented from imagination |
+| **record row → artifact, or "not addressed, because …"** | **every `gap`, `migrate` and `migrate_plus` row in the record** | silent omission |
+
+Every row of the second table needs one of the two. "Not addressed" is a fine answer —
+"blocked on Q1", "the customer's working file", "no build definition exists in this repo" — and
+writing it turns a gap in the plan into a decision the customer can overrule. Then count: if the
+plan claims *n* findings closed, that number must be derived from this table, not from the
+record's severity totals.
 
 `MANIFEST.md` replaces any interactive diff review: in a non-interactive run there is no
 "before" to diff against, so the auditable artifact is a list of what was written and why.
@@ -304,6 +332,21 @@ assertions **could not fail**: one searched a template that never contained the 
 asserted the absence of a config no fixture ever set, and one was parametrized over two env vars
 while the plan claimed it enforced five. All three passed, and the plan cited them as evidence
 for decisions. An assertion that cannot fail is worse than none, because it is believed.
+
+**The mutation must be the defect, not the absence of your helper.** This is the specific trap,
+and it produced the worst outcome observed: a suite reported as "11 failures on the unpatched
+tree, so these are real gates" where **9 of the 11 were `AttributeError: no attribute
+'key_for'`** — they failed because the patch's new function did not exist yet. An independent
+reviewer kept the helper and restored only the vulnerable call site, and the suite reported
+**12 passed with a live cross-tenant defect**. Two rules follow:
+
+- **Mutate the fix, not the scaffolding.** Leave every new symbol in place, revert the call site
+  to its original form, and require a failure. A red-to-green transition that only tracks a
+  symbol appearing tests your import, not their security.
+- **The test must exercise the module the defect lives in.** That suite never imported the
+  request handler; it re-derived both cache keys through the helper and compared them, which is
+  true by construction. If the defect is at `server.py:150`, a test that never imports
+  `server` cannot see it.
 
 **Check the build actually contains what the code reads.** Generated `EXCLUDE`/`.dockerignore`
 patterns are a live hazard: `"*.md"` in an asset-exclusion list silently strips a prompt file the

@@ -182,7 +182,7 @@ Always present this. It is the section that earns the right to the rest.
 | Session-id issuance + user binding | AgentCore does not map users to sessions `[docs]` |
 | Row-level authorization | Pod and runtime identity are per-workload, not per-user |
 | Prompt, tool design, evals, grounding | Untouched by the migration |
-| The knowledge store | Stays put — and forces VPC mode |
+| The knowledge store | Stays put. Forces VPC mode **only if it is VPC-resident** — check, don't assume |
 | Event-loop discipline | Blocking I/O in an `async def` is still yours to get right |
 
 ## Evidence status of this skill's own claims
@@ -207,7 +207,9 @@ them, so there is one place to correct when the platform moves.
 The three that change *migration planning* specifically are in
 [constraints.md](references/constraints.md) and
 [production-inventory.md](references/production-inventory.md): inbound auth is a breaking
-cutover (`AGENTSEC03`), the knowledge store forces the network design (`AGENTPERF03`), and tool
+cutover **for SigV4 callers and additive for the other three cases** (`AGENTSEC03`) — the
+distinction decides whether you open with the cheapest or the most expensive news; whether the
+knowledge store forces the network design depends on where it lives (`AGENTPERF03`); and tool
 authorization is scoped work the migration makes available rather than delivers (`AGENTSEC02`).
 
 **`[docs]` / `[reasoned]` — verify before asserting to a customer:**
