@@ -105,8 +105,14 @@ topology:
   executor_sized: true | false | unknown
   # Leave EMPTY unless you actually ran a sweep. Do not copy this example.
   measured_at_concurrency: []
-  flush_cadence: every_turn | on_evict | interval | none
-  concurrent_turn_safety: safe | last_write_wins | unknown
+  flush_cadence: every_turn | every_n_turns | interval | on_evict | none
+  # `none` is a real answer, not an omission — a team shipping it may have accepted the loss
+  # deliberately. Migration then *improves* durability rather than costing writes.
+  #
+  # last_write_wins understates the common case and made records read milder than the code:
+  # two concurrent turns mutating ONE in-memory messages list is not a lost write, it is
+  # interleaved history inside a single conversation, and no store-level fix addresses it.
+  concurrent_turn_safety: safe | serialized | last_write_wins | shared_object_race | unknown
 
 measurements:
   # Order-of-magnitude context is REQUIRED next to any compute verdict: on a real customer

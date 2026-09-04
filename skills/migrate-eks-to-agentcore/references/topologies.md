@@ -139,8 +139,11 @@ conversation-length guess.
 The tempting story — "A flushes every turn, B never flushes" — is wrong, and the error
 flatters AgentCore.
 
-A sticky pod still has to persist, because a user who closes the tab and returns
-tomorrow has no pod to come back to. The axis is not *whether* but *when*:
+A sticky pod usually has to persist, because a user who closes the tab and returns tomorrow has
+no pod to come back to. But **check rather than assert it** — real teams ship `none` on purpose.
+Observed in a production service, in a comment: *"the conversation restarts — we accept that
+today."* Telling that team they "have to" persist argues with a decision they already made.
+The axis is not *whether* but *when*:
 
 | Mode | Writes/session | Turns lost to a hard kill |
 |---|---|---|
@@ -148,6 +151,7 @@ tomorrow has no pod to come back to. The axis is not *whether* but *when*:
 | `every_n_turns` | turns/N | up to N-1 |
 | `interval` | wall-time bounded | everything since last flush |
 | `on_evict` | one per session | **the whole conversation** |
+| `none` | **zero** — nothing is persisted at all | the whole conversation, on every restart, by design |
 
 `on_evict` means "durable unless the process dies badly" — for a process that dies
 badly. A periodic flush is what closes the hole, which makes `interval` or
@@ -163,7 +167,10 @@ Why that is forced, and what it costs, are in
 and `runtime-and-sessions.md`. The migration point is narrower: **whichever flush cadence
 the customer runs today, migrating pins it to every-turn.** If they are on `on_evict`,
 that is a write-volume increase to price; if they are already `every_turn`, it is a
-wash.
+wash. **If they are on `none`, it is a durability *improvement* they did not ask for** — a
+write-volume increase from zero, and the one case where the migration makes the service
+behave differently in a way a user would notice. Do not report it as a cost regression
+without saying it is also the fix for a known accepted loss.
 
 ## Migration implications by topology
 

@@ -117,7 +117,7 @@ can reshape the plan.
 |---|---|---|---|
 | **[AGENTSEC01](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsec01.html)** ★ | How do you secure agentic memory and securely manage state between agents? | Can tenant A's session reach tenant B's context? Is long-term memory partitioned? | **Delete** (session isolation → microVM). **Keep** memory partitioning |
 | **[AGENTSEC02](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsec02.html)** ★ | How do you control and secure agent tool usage? | Can any authenticated caller invoke every tool, including destructive ones? | **Gap** usually → Cedar at the Gateway |
-| **[AGENTSEC03](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsec03.html)** ★ | How do you manage agent identities, permissions, and prevent privilege escalation? | Inbound auth; outbound 2LO; outbound 3LO; token propagation; workload identity | **Migrate+ — BREAKING.** See §Identity |
+| **[AGENTSEC03](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsec03.html)** ★ | How do you manage agent identities, permissions, and prevent privilege escalation? | Inbound auth; outbound 2LO; outbound 3LO; token propagation; workload identity | **Migrate+.** Breaking **only** for SigV4 callers — see §Identity before saying the word |
 | **[AGENTSEC04](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsec04.html)** | How do you support agent goal alignment and prevent manipulation? | Prompt-injection defences. Is authorization *inside* the model's reasoning? | **Migrate+** — Cedar moves it outside. Guardrails for content |
 | **[AGENTSEC05](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsec05.html)** | How do you implement observability and prevent repudiation? | Can you reconstruct what the agent did, for whom, on what data? | **Gap** usually. Cedar decisions log the deciding policy |
 | **[AGENTSEC06](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsec06.html)** | How do you secure multi-agent orchestration and coordination? | Only if multi-agent: does user identity survive an agent hop? | **Migrate+** → A2A + workload/user binding |
@@ -129,15 +129,27 @@ can reshape the plan.
 
 | Sub-component | Detect | Verdict |
 |---|---|---|
-| **Inbound auth** | ALB OIDC / API GW authorizer / in-app JWT / **nothing** | **Migrate+ — BREAKING** |
+| **Inbound auth** | which of four? see the split below | **depends — only one case is breaking** |
 | **Outbound 2LO** (agent as itself) | client_credentials, static secrets, hand-rolled refresh | **Migrate+** → credential provider |
 | **Outbound 3LO** (agent as the user) | per-user OAuth tokens, a `user_tokens` table, PKCE/state/callback code | **Migrate+** → token vault. Where it exists this is often the largest single deletion — but on the one customer service measured, **there was none at all**. Check before pitching it |
 | **Token propagation** | is the caller's identity carried to the tool, or does the tool trust the agent? | **Keep**, or move to a REQUEST interceptor |
 | **Workload identity** | a stable agent identity distinct from its IAM role? | **Delete** — Runtime issues one |
 
-**Inbound is breaking.** `CUSTOM_JWT` *excludes* SigV4 — a SigV4 caller gets 403 once a JWT
-authorizer is configured `[measured]`. Callers signing with SigV4 (typical service-to-service
-on EKS with Pod Identity) mean a coordinated cutover of every caller, or **two runtimes in
+**Establish which of the four cases before saying "breaking" — one is, three are not.** An
+earlier version of this table gave all four a single `BREAKING` verdict, which made the
+instrument produce the error [constraints.md](constraints.md) calls "simply wrong to the
+customer's face": the cheapest of the four cases reported as the most expensive.
+
+| What they have today | Verdict |
+|---|---|
+| **Nothing** (internal ClusterIP, no authorizer) | **additive greenfield** — there is no cutover, you are adding auth that did not exist. The *easiest* case |
+| **In-app JWT validation** already | **Migrate+, not breaking** — the same token, validated by the platform instead of in-process. Delete their verification code |
+| **ALB OIDC / API GW authorizer** | **Migrate+** — the authorizer moves; callers keep sending the same token |
+| **SigV4 callers** | **BREAKING**, and only this one |
+
+The breaking case, precisely: `CUSTOM_JWT` *excludes* SigV4 — a SigV4 caller gets 403 once a JWT
+authorizer is configured `[measured]`. Callers signing with SigV4 (typical service-to-service on
+EKS with Pod Identity) mean a coordinated cutover of every caller, or **two runtimes in
 parallel**. Phase 1, not Phase 3.
 
 **3LO is where the biggest win usually hides.** Hand-rolled per-user OAuth — PKCE, state,
