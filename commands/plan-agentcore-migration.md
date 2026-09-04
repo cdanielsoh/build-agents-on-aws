@@ -33,8 +33,9 @@ anything other than `pass` as fatal:
 | `pass` | nothing to do |
 | `trivial_fix` | a Phase 0 line item (e.g. an amd64 pin). **Not** a refusal |
 | `needs_redesign` | plan the redesign as its own phase, and cost it before Phase 1 |
-| `fail` | **refuse to plan the migration.** Say which gate and why |
-| `unknown` | **do not plan past Phase 0.** An unevaluated gate is not a passed gate — name what would resolve it |
+| `fail` | refuse **only if the remedy is a platform capability the customer cannot supply.** If the remedy is a rebuild, a pin or a config change, it is a `trivial_fix` mis-recorded — see below |
+| `unknown`, resolvable by you | **do not plan past Phase 0.** An unevaluated gate is not a passed gate — name what would resolve it, and resolve it |
+| `unknown`, needs a Gate 3 answer | plan on, with the gate as a named assumption and a stated consequence if it is wrong. Quota headroom needs their request volume; nothing in a repo answers it, so blocking here would block every repo-only assessment |
 
 **Read `fail` against the remedy, not the word.** Records written before `trivial_fix` existed —
 and assessors who never reach for it — record `image_architecture: fail` for an amd64 image,
@@ -188,17 +189,24 @@ Order them with Step 2's tie-break, since reversibility will not separate them.
 
 ## Step 3 — Generate scaffolding
 
-**Start from the shipped template, do not hand-type it.** `scripts/scaffold.py` materializes a
-`strands-agentcore` template that already has the ARM64 base, the `opentelemetry-instrument`
-CMD, `/ping`, and the "do NOT set `OTEL_*` yourself" comment — the details most often got wrong
-from memory:
+**Lift the container details from the shipped template rather than typing them from memory.**
+A migration adapts an *existing* repo, so materializing the whole `strands-agentcore` template
+is usually wrong — its `pyproject.toml` + `agent/` package layout will not match theirs. Read it
+and take the four things that are routinely got wrong:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py" <out>/scaffold --template strands-agentcore --dry-run
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py" /tmp/ref --template strands-agentcore
 ```
 
-Then delete what does not apply and adapt the rest. Note the template puts the entrypoint at
-`agent/app.py`, inside a package — which is why the naming trap below does not bite it.
+| Lift | Why not from memory |
+|---|---|
+| `FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:3.12-slim` | the ECR mirror, not Docker Hub — unauthenticated Hub pulls from CodeBuild are rate-limited, and this is a routine build failure |
+| `CMD ["opentelemetry-instrument", "python", "app.py"]` | the wrapper is how tracing works at all |
+| `app.run(host="0.0.0.0", port=8080)` | **bind explicitly.** A bare `app.run()` auto-detects and picks `127.0.0.1` unless `/.dockerenv` exists — the runtime then never reaches READY, presenting as an app startup failure |
+| the "do NOT set `OTEL_*` yourself" comment | setting them silently breaks the delivery path |
+
+Note the template puts its entrypoint *inside* a package, which is why the naming trap below
+does not bite it.
 
 Scaffold for components the record marks `migrate` or `migrate_plus`. **Under `redesign_first`,
 scaffold across `gap` rows too** — that verdict means most of the work *is* the gaps, and a
@@ -217,12 +225,20 @@ files.
   `__init__.py` shadows it, and `from app.agent import ...` raises
   `ModuleNotFoundError: No module named 'app.agent'; 'app' is not a package`. Name it
   `agentcore_app.py` or similar.
-- **Dockerfile** — ARM64 (microVMs) or the target architecture (Instances), `/ping`, port 8080.
-  **One image serving both platforms needs both halves:** `CfnRuntime`'s container
-  configuration carries only a container URI and no command override, so the image `CMD` must
-  be the AgentCore entrypoint, and the **EKS Deployment must override it** with `command:`/
-  `args:`. That override is a change to the running service — put it in Phase 0, flag it, and
-  do not apply it here.
+- **Decide the artifact before scaffolding a build.** There are two — a container image, or a
+  **code zip** with `codeConfiguration`, which needs no Dockerfile, no ECR and no image build. If
+  the record raises the zip path, or the agent is small and pure-Python, **price it against the
+  build pipeline first**: one plan built a CodeBuild stack, a Dockerfile rewrite and an
+  architecture assertion for an agent whose own record twice said the zip removed the question.
+  It also dissolves the `CMD` conflict in the next bullet, because `entryPoint` is a property of
+  the runtime rather than of the image. Ceilings and arm64-wheel traps:
+  [runtime-and-sessions.md](../skills/deploy-on-agentcore/references/runtime-and-sessions.md).
+- **Dockerfile**, if you chose the container — ARM64 (microVMs) or the target architecture
+  (Instances), `/ping`, port 8080. **One image serving both platforms needs both halves:**
+  `CfnRuntime`'s container configuration carries only a container URI and no command override, so
+  the image `CMD` must be the AgentCore entrypoint, and the **EKS Deployment must override it**
+  with `command:`/`args:`. That override is a change to the running service — put it in Phase 0,
+  flag it, and do not apply it here.
 - **CDK — three stacks, not two.** Runtime + execution role, ECR, **and an image-build stack**.
   The build stack is not optional: it is how you get an arm64 image without local tooling and
   how you get a content-addressed tag. A mutable tag makes a later deploy a silent no-op. See
@@ -230,9 +246,10 @@ files.
 - **Network** — `networkMode = "VPC"` if **any** dependency is VPC-resident, plus the endpoint
   set from
   [vpc-and-network-isolation.md](../skills/deploy-on-agentcore/references/vpc-and-network-isolation.md).
-  **Read it rather than reproducing the list here** — the copy that used to sit in this bullet
-  went stale twice, and it omitted `bedrock-agent-runtime`, so following it exactly produced the
-  silent hang the same sentence warns about. Ask *which* dependency forces VPC mode, because it
+  **Read it rather than reproducing the list here.** A missing endpoint hangs the agent at
+  runtime with nothing in the logs naming what was unreachable — and the copy of the list that
+  used to sit in this bullet went stale twice, omitting `bedrock-agent-runtime`, so following it
+  exactly produced exactly that hang. Ask *which* dependency forces VPC mode, because it
   is often not the one you expect: a Bedrock Knowledge Base is regional and needs no VPC, while
   the session cache beside it does — so the network design is downstream of the **memory**
   decision, not the retrieval one. Assert the set in a test. **If nothing is VPC-resident, assert
@@ -262,7 +279,57 @@ comparable across engagements:
 `MANIFEST.md` replaces any interactive diff review: in a non-interactive run there is no
 "before" to diff against, so the auditable artifact is a list of what was written and why.
 
+### Run what you generated, before you write the plan around it
+
+**Non-negotiable, and the single highest-value step here.** An independent review of one
+generated plan found seven defects that this one action would have caught, including a
+`StopRuntimeSession` call whose wrong parameter name discarded every answer the service
+computed, and a test presented in the plan as a working pre-deploy gate that could never pass.
+
+| Artifact | Minimum check |
+|---|---|
+| every Python file | imports, and `python3 -m py_compile` |
+| tests you wrote | **`pytest` actually run.** A test you did not run is not a gate, and a failing one in an `&&` chain silently blocks every command after it |
+| CDK | `cdk synth`, all stacks |
+| any boto3 call you wrote | parameter names against the botocore model, not memory. `python3 -c "import botocore.session as s; print(s.get_session().get_service_model('<svc>').operation_model('<Op>').input_shape.required_members)"` |
+| the first concrete action of every phase | run it, or say in the plan that you did not |
+
+If the environment cannot run something, **say so in the plan at that step** rather than
+presenting it as verified. A plan whose first concrete action fails is worse than no plan,
+because the customer spends their trust discovering it.
+
+**Passing is not enough — mutation-test every assertion you wrote.** Break the thing each test
+guards and confirm the test fails. Measured on one generated suite, three of six posture
+assertions **could not fail**: one searched a template that never contained the resource, one
+asserted the absence of a config no fixture ever set, and one was parametrized over two env vars
+while the plan claimed it enforced five. All three passed, and the plan cited them as evidence
+for decisions. An assertion that cannot fail is worse than none, because it is believed.
+
+**Check the build actually contains what the code reads.** Generated `EXCLUDE`/`.dockerignore`
+patterns are a live hazard: `"*.md"` in an asset-exclusion list silently strips a prompt file the
+agent loads at construction, producing a runtime that reaches READY and 500s on first invoke —
+the exact failure the rest of the plan is written to prevent. Synthesize, list the staged
+context, and confirm every non-`.py` file the code opens is in it.
+
+**Phase 1 compares against the EKS service, so confirm the EKS service starts.** If the image
+cannot be built or the entrypoint does not exist — common, and itself a finding — Phase 1 has no
+baseline and its exit criterion is unmeetable. Say that instead of writing the comparison step.
+
+The command applies "verify observed state, never exit codes" to the customer's
+infrastructure. Apply it to your own output too.
+
+**Keep the two surfaces behaviourally identical.** If you add input validation, logging or a
+guard to the AgentCore entrypoint, the same change lands on the EKS surface **in the same
+phase** — otherwise Phase 1 and Phase 2 exit on an answer comparison between two services that
+differ by exactly what you added, and the parity finding is void. Setting an env var on the EKS
+side that nothing reads does not count.
+
 Per phase: goal, steps, verification, rollback, owner, and what remains `[open]`.
+
+**If the record names no owner — the normal pre-engagement case — do not emit a column of
+placeholders.** Drop the field and state once, near the top, that no phase has a named owner and
+no cutover approver exists, listing it as the first thing the customer must supply. A table of
+`TBD` reads as sloppiness; one sentence reads as a finding, which is what it is.
 
 **Verify observed state, never exit codes.** Three observed cases worth encoding as checks:
 `kubectl apply` returns success while a Pod Security violation prevents any pod being created;

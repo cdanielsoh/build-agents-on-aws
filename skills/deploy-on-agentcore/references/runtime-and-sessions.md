@@ -3,7 +3,8 @@
 ## Table of Contents
 1. [Runtime Model: VM-per-Session](#runtime-model-vm-per-session)
 2. [AgentCore Runtime Entrypoint](#agentcore-runtime-entrypoint)
-3. [Session (Runtime Container)](#session-runtime-container)
+3. [Two Deployment Artifacts: Container or Code Zip](#two-deployment-artifacts-container-or-code-zip)
+4. [Session (Runtime Container)](#session-runtime-container)
 4. [SessionBuilder (Construction)](#sessionbuilder-construction)
 5. [Configuration](#configuration)
 6. [No Graceful Shutdown](#no-graceful-shutdown)
@@ -104,7 +105,28 @@ lifetime is the dominant meter, not CPU.
 
 ## AgentCore Runtime Entrypoint
 
-The agent runs as a Docker container on Bedrock AgentCore Runtime (serverless). The entrypoint uses `BedrockAgentCoreApp` with an `@app.entrypoint` async generator.
+The agent runs as a Docker container on Bedrock AgentCore Runtime (serverless). The entrypoint
+uses `BedrockAgentCoreApp` with an `@app.entrypoint` handler.
+
+**Three handler shapes are supported, not just the async generator** — worth knowing, because a
+plain `return` handler is correct and earlier versions of this file implied it was not.
+`[verified]` from `BedrockAgentCoreApp._invoke_handler` in `bedrock-agentcore` 1.22.0:
+
+| Handler | Dispatched onto |
+|---|---|
+| `async def` + `yield` (async generator) | bridged through the worker loop as a sync generator |
+| `async def` + `return` | a **dedicated worker event loop** |
+| plain `def` (incl. sync generators) | the thread pool |
+
+Stream only if the caller streams; a specialist agent invoked by another agent has no reason to.
+
+**The isolation is load-bearing, and it is one of the hard parts AgentCore removes.** The
+docstring's own reason: *"This ensures the main event loop stays responsive for /ping health
+checks regardless of whether handlers contain blocking operations."* So a blocking call inside
+the entrypoint does **not** stall the health check the way it would in a hand-rolled FastAPI
+service. If an assessment found event-loop blocking or an undersized executor on their EKS
+service, that defect does not carry across — say so, rather than scheduling a fix for both
+platforms.
 
 ### Basic Structure
 
@@ -182,6 +204,59 @@ if __name__ == "__main__":
 **No cleanup**: The lifespan `yield` block won't run (containers are hard-killed). Don't rely on it for saving state.
 
 ---
+
+## Two Deployment Artifacts: Container or Code Zip
+
+Everything above and below assumes a container image, because that is the path this skill's
+templates and CDK use. **There is a second path, and earlier versions of these references did not
+mention it at all** — which led one generated migration plan to build a 138-line CodeBuild stack,
+a Dockerfile rewrite and an architecture assertion to solve a problem this path removes.
+
+`agentRuntimeArtifact` is a union: `containerConfiguration` **or** `codeConfiguration`.
+
+```python
+agentRuntimeArtifact={
+    "codeConfiguration": {
+        "code": {"s3": {"bucket": f"bedrock-agentcore-code-{account_id}-{region}",
+                        "prefix": f"{agent_name}/deployment_package.zip"}},
+        "runtime": "PYTHON_3_13",
+        "entryPoint": ["opentelemetry-instrument", "main.py"],  # drop the wrapper if no ADOT dep
+    }
+},
+lifecycleConfiguration={"idleRuntimeSessionTimeout": 300, "maxLifetime": 1800},
+```
+
+In CDK: `CfnRuntime.AgentRuntimeArtifactProperty(code_configuration=...)` with
+`CodeConfigurationProperty(code, entry_point, runtime)` `[verified]` in aws-cdk-lib.
+
+### Why it matters for a migration, beyond convenience
+
+| | Container | Code zip |
+|---|---|---|
+| Needs a Dockerfile, ECR, an image build | yes | **no** |
+| Command override | **none** — `containerConfiguration` carries only a URI, so the image `CMD` must be the AgentCore entrypoint and any second consumer (an EKS Deployment) must override it | **`entryPoint` is a property of the runtime** |
+| Size ceiling | image limit (2048 MB) | **250 MB zipped / 750 MB unzipped**, combined `[docs]` |
+| Architecture | arm64 (microVMs) | arm64 — the zip must contain arm64 wheels |
+
+The middle row is the decisive one for a **dual-platform phase**. On the container path, "one
+image serving both EKS and AgentCore" forces a change to the running EKS Deployment. On the code
+path there is no shared `CMD` to fight over, so that whole problem — and the Phase 0 item it
+generates — disappears. For a small pure-Python agent this is usually the cheaper migration.
+
+### Traps specific to the zip
+
+- **Build the wheels for arm64**, not for your laptop. Pure-Python packages are fine anywhere;
+  NumPy, Pandas and anything with C extensions are not:
+  ```bash
+  uv pip install --python-platform aarch64-manylinux2014 --python-version 3.13 \
+      --target=deployment_package --only-binary=:all: -r pyproject.toml
+  ```
+  A package available only as a source distribution must be built on an arm64 Amazon Linux host.
+- **Exclude `__pycache__`.** Bytecode compiled on a different architecture may not load `[docs]`.
+- **File permissions are enforced:** 644 for non-executable files, 755 for directories and
+  executables. Zips built on Windows commonly violate this.
+- The zip is decompressed at **`/var/task`**, which is the head of `sys.path` — so a vendored
+  dependency in a subfolder is imported as `from <folder> import <pkg>`.
 
 ## Session (Runtime Container)
 
@@ -481,7 +556,19 @@ AgentCore Runtime includes an ADOT (AWS Distro for OpenTelemetry) sidecar that c
 
 ### Log Streams in CloudWatch
 
-AgentCore creates log streams under `/aws/bedrock-agentcore/runtimes/{runtime-id}/`:
+The log **group** is per runtime *and endpoint*:
+`/aws/bedrock-agentcore/runtimes/{runtime-id}-{endpoint-name}`. The endpoint suffix is not
+optional — `[measured:reference]`, read off 10 live runtimes, every group ended `-DEFAULT` or
+`-<endpoint_name>`. An earlier version of this line omitted it, and a `describe-log-groups`
+built from the documented path returns nothing against a perfectly healthy runtime, which
+presents as "the agent is not logging".
+
+```bash
+aws logs describe-log-groups --log-group-name-prefix /aws/bedrock-agentcore/runtimes \
+  --region <r> --query 'logGroups[].logGroupName' --output text
+```
+
+Within that group, the streams are:
 
 | Stream Pattern | Content |
 |---|---|

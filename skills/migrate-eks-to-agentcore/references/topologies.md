@@ -176,3 +176,34 @@ wash.
 In all three, what does **not** transfer: session-id issuance and binding it to an
 authenticated user. AgentCore does not map users to sessions `[docs]`. The store
 disappears; the session *broker* does not.
+
+## A second axis for multi-agent services: how many runtimes?
+
+The three topologies above are about *session* state and say nothing about a supervisor
+delegating to specialists. That is an independent decision, and it has to be made before any
+runtime is created because it determines the IAM and network shape.
+
+**Reject the argument you will reach for first.** On EKS, splitting specialists into separate
+Deployments buys blast-radius and noisy-neighbour isolation. On AgentCore **that isolation is
+already free** — a microVM per session isolates by construction — so a "keep them separate for
+isolation" case built on their current Deployment layout evaporates on the target platform. A
+plan that leads with it is arguing from the source architecture.
+
+**The argument that survives is IAM scope.** One runtime hosting all specialists in-process means
+one execution role holding the union of every specialist's permissions — a log-reading agent that
+can also query the knowledge base and call every model. If they run N ServiceAccounts today,
+collapsing to one runtime is a **regression** in least privilege, and rebuilds a confused deputy
+inside the process. Record it as `regress` rather than letting the platform move quietly widen a
+boundary.
+
+| | One runtime, agents-as-tools | One runtime per agent |
+|---|---|---|
+| Execution roles | 1, holding the union | N, each scoped |
+| Session workloads per conversation | 1 | **N** — check against the account quota, and it multiplies shadow traffic too |
+| Memory billing | one peak | each runtime bills its own wall-clock, and a specialist's clock runs *inside* the supervisor's |
+| Delegation | in-process call | `InvokeAgentRuntime` — a tool-set change, plus an endpoint if VPC-resident |
+| Per-component rollback | no | yes, and it is what makes a phased cutover possible |
+
+Neither is a default. Cost the options rather than inheriting the current shape — and if the
+record leaves it open, say the plan *chose* it and flag it, because it is not reversible after
+create.
