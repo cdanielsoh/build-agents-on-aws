@@ -35,8 +35,16 @@ throughout.** If the identity might be production, say so and confirm before pro
 Read thresholds live; never carry numbers in from the plugin. Record each gate as
 `pass | fail | needs_redesign` with an evidence tag.
 
-**Stop here on a real blocker.** Reporting one in ten minutes beats a thorough assessment of
-an impossible migration. Offer the escape hatch from `constraints.md` and skip to Step 5.
+**On a real blocker, stop the *cost and planning* work — not the inventory.** Reporting a
+blocker in ten minutes beats a thorough assessment of an impossible migration, and you should
+say so immediately. But do not skip Gate 1: on one assessed service, obeying an unqualified
+"stop" would have suppressed a live cross-client data exposure, a prompt-injection path into
+legal findings and a total absence of audit trail — all true whether or not they ever migrate,
+and all of it the value the customer actually gets from the engagement.
+
+So: report the blocker first and prominently, skip Gate 2 entirely, and still walk the
+inventory. Note in `gate0` which compute type you gated against — three gates (GPU,
+architecture, session duration) differ between microVMs and Instances.
 
 ## Step 2 — Gate 1: walk the inventory
 
@@ -78,18 +86,24 @@ depth: quick | full
 
 gate0:
   - check: single_turn_duration        # see constraints.md for the gate list
-    result: pass | fail | needs_redesign | unknown
+    # trivial_fix = a real gate that a one-line change clears (e.g. an amd64 pin).
+    # Do NOT bucket it with an unresolvable blocker; see constraints.md's cost column.
+    result: pass | trivial_fix | needs_redesign | fail | unknown
+    compute_type_assumed: microvm | instances   # three gates flip between them
     evidence: measured | verified | docs | reasoned | open
     note: <one line>
 
 topology:
   detected: A_stateless | B_sticky | single_turn
   evidence: <file:line>
-  event_loop_blocking: true | false | unknown
-  # A clean event loop is necessary and NOT sufficient. asyncio.to_thread uses the default
-  # executor, which in a 2-CPU container is 6 threads. See assessment.md.
+  # The taxonomy assumes conversational traffic. Set this FIRST — it gates the rest.
+  work_unit: turn | job | document
+  # not_applicable when there is no `async def` at all; `false` would read as a clean pass.
+  event_loop_blocking: true | false | not_applicable | unknown
+  concurrency_bound_by: asyncio_executor | anyio_limiter | explicit | none | unknown
   executor_sized: true | false | unknown
-  measured_at_concurrency: [1, 6, 12]    # a single level produces a plausible, wrong record
+  # Leave EMPTY unless you actually ran a sweep. Do not copy this example.
+  measured_at_concurrency: []
   flush_cadence: every_turn | on_evict | interval | none
   concurrent_turn_safety: safe | last_write_wins | unknown
 
@@ -131,7 +145,7 @@ inventory:
     state: present | present_but_ineffective | absent | absent_by_design | not_applicable | unknown
     effective: true | false | unknown     # required when state starts with "present"
     evidence: <file:line, or why unknown>
-    verdict: migrate | migrate_plus | keep | delete | regress | stay | gap
+    verdict: migrate | migrate_plus | keep | delete | regress | stay | gap | correctly_absent
     note: <one line>
     customer_agrees: true | false | undecided
 
@@ -149,7 +163,9 @@ lens_coverage:
   not_assessed: [AGENTSEC09]           # with a reason per entry in open_questions
 
 recommendation: migrate | migrate_partially | stay | redesign_first
-confidence: high | medium | low         # rubric in assessment.md
+# Two axes. A Gate 0 certainty with no telemetry is high/unavailable, not "low".
+recommendation_confidence: high | medium | low
+cost_confidence: high | medium | low | unavailable
 open_questions: []
 
 dissent:

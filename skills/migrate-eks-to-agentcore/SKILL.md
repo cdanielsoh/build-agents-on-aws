@@ -62,12 +62,19 @@ what cannot be derived — data residency, compliance, team depth, roadmap.
 
 | Tag | Means |
 |---|---|
-| `[measured:customer]` | Observed on **their** workload. The only kind you may quote as theirs |
+| `[measured:customer]` | Observed on **their running workload**. The only kind you may quote as theirs |
 | `[measured:reference]` | Observed on this plugin's reference build — **n=1 agent**. Illustrates shape, never their number |
-| `[verified]` | Queried from a live AWS API (Service Quotas, Pricing, SDK) |
+| `[read:source]` | **Read in their repo at `file:line`.** Most of a pre-deployment assessment is this |
+| `[stated:customer]` | Asserted by the customer — a README, a ticket, a conversation. Often the only source for volume and spend, and not independently checkable |
+| `[verified]` | Queried from a live AWS API (Service Quotas, Pricing, SDK) — **in their account, or say whose** |
 | `[docs]` | Stated in AWS documentation, not independently confirmed |
 | `[reasoned]` | Follows from the above — argument, not observation |
 | `[open]` | Not established. Say so; do not fill the gap |
+
+`[read:source]` and `[stated:customer]` exist because they were missing and assessors had to
+choose between overclaiming (`measured`) and underclaiming (`reasoned`) for the evidence they
+actually had. A Dockerfile platform flag is neither an observation of a running system nor an
+inference — it is a fact read at a line number, and it is strong.
 
 **3. Never quote a cost figure you did not measure on their workload.** Not even the ones in
 this skill — they are one agent, one shape, n=1. Cost figures here exist to show *which levers
@@ -96,10 +103,14 @@ proceed. Do not re-argue.
 ## Gate 0 — hard blockers, checked first
 
 Cheap, binary, and they can end the conversation before anyone wastes a week. Any one is
-a *stay* or a *redesign-first*: **single-turn duration** past the request timeout, **GPU**,
-**sidecars**, a **non-HTTP/MCP/A2A/AG-UI protocol**, **image size**, an **amd64-only
-dependency**, **concurrency** past the session or creation-rate caps, **region**
-availability, and **inbound auth method** if callers sign with SigV4.
+a *stay* or a *redesign-first*: **turn duration** past the request timeout, **sidecars**, a
+**non-HTTP/MCP/A2A/AG-UI protocol**, **image size**, **concurrency** past the session or
+creation-rate caps, **region** availability, **custom isolation** (Kata/gVisor), **session
+lifetime** past the compute type's ceiling, and the **inbound auth method**.
+
+**Gate against a compute type, not "AgentCore".** GPU, architecture and session duration all
+differ between microVMs and Instances — GPU is *not* a blocker on Instances, and treating it as
+one has produced a wrong customer verdict. See [constraints.md](references/constraints.md).
 
 **Read the thresholds live**; never carry numbers in from this plugin, because several are
 adjustable and accounts differ.
@@ -207,7 +218,8 @@ authorization is scoped work the migration makes available rather than delivers 
 | Outbound auth / token propagation to tools (3LO, token vault) | Inbound only was tested |
 | Row-level authorization | Cedar blocked a *tool*; filtering *rows* by caller identity untested |
 | Long-running turns via `HealthyBusy` + polling | Documented escape hatch, not demonstrated |
-| GPU / sidecar / protocol blockers | Documented constraints, not tested |
+| Sidecar / protocol blockers | Documented constraints, not tested |
+| GPU on the Instances compute type | `[docs]` — supported families confirmed in the devguide, not deployed by us |
 
 For outbound auth and row-level filtering, defer to **deploy-on-agentcore**
 (`identity.md`, `policy.md`, `security.md`) and say plainly that the migration effort
@@ -242,7 +254,9 @@ the migration case.
 
 - Non-agent workloads already on the cluster, with the platform team to run it
 - Turns that legitimately exceed 15 minutes with checkpoint-resume semantics
-- GPU, custom isolation (Kata/gVisor), sidecars, or non-HTTP protocols
+- Custom isolation (Kata/gVisor), sidecars, or non-HTTP protocols. **Not GPU** — Instances supports it
+- Node-level runtime threat detection (GuardDuty EKS Runtime Monitoring, Falco) with no managed equivalent
+- Sessions longer than 14 days, or longer than 8 hours if microVMs are required
 - Sustained high volume where reserved or Spot capacity beats per-session billing
 - Deep Kubernetes expertise already paid for, and a working service
 - A regulatory posture requiring everything, including the tool gateway, to be

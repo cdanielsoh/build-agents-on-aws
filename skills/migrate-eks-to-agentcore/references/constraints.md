@@ -28,18 +28,40 @@ Also watch for near-name collisions: `Tool-call/tool-list concurrent connections
 5000 and is a **Gateway** quota, not a runtime session cap. Reading the wrong row is an easy
 mistake and it was made in an earlier version of this skill.
 
+### Gate 0 is per-compute-type. Check which one you are gating against.
+
+**This was wrong in earlier versions and it inverted a customer verdict.** AgentCore Runtime
+has two compute types and the constraint set differs:
+
+| | microVMs (default) | **Instances** |
+|---|---|---|
+| Max session | 8 h | **14 days** |
+| Architecture | **arm64 only** | **x86_64 and arm64** |
+| GPU | not supported | **supported** — `g4dn, g5, g6, g6e, gr6, g6f, gr6f, g7e`, `inf2`. Drivers provisioned; stock CUDA images work `[docs]` |
+| Networking | `PUBLIC` or VPC | **VPC only** |
+| Agents per session | 1:1 | **1:N**, shared filesystem |
+| Persistent storage | session storage | **EBS re-attached across session stops** |
+| Pricing | consumption, billed by AgentCore | **EC2 in your account** — your Savings Plans, RIs, ODCRs apply |
+
+So **three Gate 0 rows flip on Instances**: GPU, architecture, and session duration. Gating a
+GPU workload as "not resolvable" is wrong; the honest answer is *possible but expensive, and
+it becomes an EC2 cost conversation rather than a consumption one*. Compute type cannot be
+changed after a runtime is created.
+
 | Check | Cost to resolve | Detail |
 |---|---|---|
 | **Single-turn duration** past the request timeout | Redesign as async + `HealthyBusy` polling. Real work, and the timeout is **not adjustable** | `runtime-and-sessions.md` |
-| **Image architecture** — amd64-only dependency | Usually a rebuild. Cheap. Do it first | `runtime-and-sessions.md` |
-| **Image size** over the cap | Slim the image. Rarely binding — a real agent image measured 482 MB | `runtime-and-sessions.md` |
-| **GPU** / local inference | Not resolvable. Stay on EKS | `runtime-and-sessions.md` |
+| **Image architecture** — amd64-only dependency | On microVMs: a rebuild (cheap, do it first). On Instances: **not an issue**, x86_64 is supported | `runtime-and-sessions.md` |
+| **Image size** over the cap | Slim the image. A plain Strands agent measured 482 MB — but **any CUDA/ML base image blows the 2 GB cap on its base layer alone** (`nvidia/cuda:12.4-cudnn-runtime` is ~2.1 GB compressed). "Rarely binding" is false for exactly the workloads that need GPU | `runtime-and-sessions.md` |
+| **GPU** / local inference | **Not** a blocker — use the **Instances** compute type (supported families above). Blocker only if you require microVMs for another reason | `runtime-and-sessions.md` |
 | **Sidecars** required | Restructure, or stay | `runtime-and-sessions.md` |
 | **Protocol** not HTTP / MCP / A2A / AG-UI | Front it with HTTP, or stay | `runtime-and-sessions.md` |
 | **Concurrency** past the session or creation-rate caps | Quota increase. **Lead time, not a wall** — raise it during assessment | `runtime-and-sessions.md` |
 | **Region** absent | Probe with `list-agent-runtimes`; published lists have been stale | `runtime-and-sessions.md` |
-| **Inbound auth: SigV4 today, JWT target** | **Breaking.** Coordinated caller cutover, or two runtimes. See below | `identity.md` |
-| **Inbound auth: NONE today** | **Not breaking — additive greenfield.** But it is simultaneously the highest-severity *current* gap. See below | `identity.md` |
+| **Inbound auth: in-app JWT validation** | **Like-for-like, the cheapest case.** The platform authorizer replaces ~7 lines of verification. Claim *extraction* stays yours | `identity.md` |
+| **Inbound auth: SigV4 today, JWT target** | **Breaking.** Coordinated caller cutover, or two runtimes | `identity.md` |
+| **Inbound auth: NONE today** | **Not breaking — additive greenfield.** Simultaneously the highest-severity *current* gap | `identity.md` |
+| **Inbound auth: proxy-terminated mTLS** (Envoy/Istio sidecar) | **Loss of a compliance control.** Runtime offers SigV4 or CUSTOM_JWT only; there is no mTLS equivalent, and the sidecar's outbound policy goes too. A security-team decision, not an engineering one | `identity.md` |
 | **VPC-resident knowledge store** | Not a blocker, but forces VPC mode and a full endpoint set | `vpc-and-network-isolation.md` |
 
 ## The four that people get wrong
@@ -57,7 +79,11 @@ service-to-service on EKS with Pod Identity) and the target is JWT, that is a co
 cutover of every caller, or **two runtimes in parallel** with routing deciding who has
 moved. Belongs in Phase 1 of the plan, not Phase 3.
 
-**But check for the third case first, because it inverts this.** A service with **no inbound
+**Four cases, and only one of them is breaking. Establish which before saying the word.**
+Leading with "BREAKING" against a service that already validates a JWT in-process is simply
+wrong, and it is the cheapest case of the four.
+
+**Check for the no-auth case, because it inverts the framing.** A service with **no inbound
 authentication at all** — internal ClusterIP, no Ingress, trusting the network — is common and
 was the case on the customer service assessed here. Then `CUSTOM_JWT` is **additive greenfield
 work, not a cutover**: there is no existing credential to migrate, and the migration framing is
@@ -85,10 +111,24 @@ naming what was unreachable — not a failed deploy.
 
 → `deploy-on-agentcore/references/vpc-and-network-isolation.md`
 
-### 3. "Nothing reachable from the internet" is not satisfiable
+### 3. "Nothing reachable from the internet" — private *reachability* yes, private *placement* no
 
-The Gateway cannot be placed in a VPC. Cognito and Memory are managed regional endpoints.
-You get private *reachability*, not private *placement*.
+Earlier versions said this was "not satisfiable", which is **wrong and manufactured a blocker
+for exactly the regulated customer who needs the answer.** A Gateway interface endpoint
+exists `[verified]`:
+
+```
+com.amazonaws.<region>.bedrock-agentcore.gateway
+  → *.gateway.bedrock-agentcore.<region>.amazonaws.com
+```
+
+plus `bedrock-agentcore` and `bedrock-agentcore-control`. So a customer whose control is "all
+egress via interface endpoints, audited" **can** satisfy it for the data path.
+
+What remains true is narrower: `CreateGateway` has no network *placement* field, so the
+Gateway is a regional service reached privately rather than a resource inside your VPC. Its
+protection is the JWT authorizer, Cedar policies and optionally WAF — not its network
+position. State that distinction; do not state "not satisfiable".
 
 **Migration consequence:** if the customer has this requirement, surface it in the
 assessment and record it as a known gap in the decision record. Discovering it during
@@ -114,11 +154,26 @@ keeps working if they defer it.
 
 Kept here because it is the only constraint where the *EKS* side is the interesting half.
 
+AgentCore has **three** non-adjustable duration ceilings, not one. Earlier versions of this
+file documented only the first, which made the async escape hatch look unconstrained:
+
+| Ceiling | Value | Quota code | Applies to |
+|---|---|---|---|
+| Request timeout | **15 min** | `L-3ED45A13` | one synchronous request |
+| **Streaming maximum duration** | **60 min** | `L-C91AC63F` | a streaming response — the operative cap for SSE/WebSocket |
+| **Asynchronous job maximum duration** | **8 h** | `L-FDE792EE` | the `HealthyBusy` background-task pattern |
+
+All three `[verified]` non-adjustable in us-east-1. **The async redesign this file recommends
+as the escape hatch is itself capped at 8 hours** — say so, or a customer redesigns into a
+second wall.
+
+Against EKS:
+
 | | EKS + ALB | AgentCore |
 |---|---|---|
-| Ceiling | `idle_timeout`, default **60s** | **15 min** request timeout |
-| Applies to | gap between bytes | total request |
-| Adjustable | yes | **no** |
+| Ceiling | `idle_timeout`, default **60s** | 15 min request / 60 min streaming / 8 h async |
+| Applies to | gap between bytes | total request / stream / job |
+| Adjustable | yes | **no, none of the three** |
 | Failure shape | LB closes the stream, pod logs nothing | 504 |
 
 The ALB default is the nastier one, and it is often already broken in the customer's

@@ -88,13 +88,46 @@ tuned**, because tuning removes the memory and Memory-event lines it was small a
 "CPU is a rounding error" is true of the default and not of the configuration this skill
 recommends. Quote whichever matches what you are proposing.
 
+## The top cost lever and warm reuse are mutually exclusive
+
+Not previously stated anywhere, and it is the central economic question for short-turn services.
+
+`StopRuntimeSession` saves ~12× on memory by ending the session. Warm reuse avoids microVM
+start latency by *keeping* the session. **You cannot have both.** AWS is explicit: "Without a
+consistent session ID, each request may be routed to a new microVM, which may result in
+additional latency due to cold starts" `[docs]`.
+
+So for a **single-turn** service — where every request is its own conversation — the "tuned"
+configuration this file recommends means **paying microVM start on every request**. Measured
+start overhead was ~1.96s `[measured:reference, n=3]`, against turns of a few seconds. That is
+a latency regression traded for a cost saving, and the trade has to be stated rather than
+having both columns claimed.
+
+| Shape | `StopRuntimeSession` | Consequence |
+|---|---|---|
+| Single-turn | every request | pays start latency every time. Cost-optimal, latency-worst |
+| Short conversation (3-10 turns) | at conversation end | the sweet spot — one start amortised over the turns |
+| Long / shift-length | at conversation end | start cost is negligible; but check the session ceiling |
+
+For single-turn, also note the binding quota changes: the **new-session creation rate** (25/s
+default) becomes the limit rather than the concurrent-session cap, because every request
+creates a session.
+
 ## Crossover, not "savings percentage"
 
 EKS's bill at 100k conversations/month was $79.79, of which **$73.00 was the fixed
 control plane** — compute was $6.79. So the decision-useful figure is a volume
 crossover:
 
-- **Below ~56k conversations/month**: AgentCore cheaper. No fixed floor to amortise.
+**The unit is load-bearing and it is not "conversations".** ~56k *conversations*/month silently
+assumes the reference workload's 3-turn, ~80-second-active shape. A "conversation" that is a
+9-hour analyst shift bills three orders of magnitude more memory, so a plausible-sounding volume
+reads as "AgentCore cheaper" when the truth is the opposite. **Denominate in billed
+session-seconds** (active + think + idle tail) × peak GB, or state the session shape inline
+every time you quote a crossover.
+
+- **Below ~56k conversations/month** *at the reference's 3-turn shape*: AgentCore cheaper. No
+  fixed floor to amortise.
 - **Above it**: EKS cheaper — *at AgentCore's default configuration*. Tuned, AgentCore
   won at every volume tested.
 
