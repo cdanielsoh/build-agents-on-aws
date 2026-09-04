@@ -47,6 +47,47 @@ End user ──JWT──▶ Gateway (CUSTOM_JWT validates inbound)
 The inbound JWT's `sub` claim becomes the **vault key** for 3LO. That is the whole trick:
 the identity you authenticated becomes the identity whose downstream token you look up.
 
+### Inbound: `CUSTOM_JWT` replaces SigV4, it does not add to it
+
+The rest of this document is about outbound, but this one inbound property changes
+migration and rollout plans, so it belongs here. Verified against a live runtime with a
+`customJWTAuthorizer` (Cognito user pool, M2M `client_credentials`):
+
+| Caller | Result |
+|---|---|
+| SigV4 via `boto3.invoke_agent_runtime` | **403 AccessDeniedException** — *"Authorization method mismatch. The agent is configured for a different authorization method than what was used"* |
+| No `Authorization` header | **401** + `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource"` |
+| `Authorization: Bearer <jwt>` | **200** |
+
+Three consequences:
+
+**The authorizer is a property of the runtime, not the endpoint.** You cannot accept
+SigV4 and JWT on the same runtime. Switching an existing SigV4 caller to JWT is a
+coordinated cutover of every caller, or two runtimes in parallel with routing deciding
+who has moved. Plan it early; discovering it at cutover means every client changes on the
+same day.
+
+**`boto3.invoke_agent_runtime` cannot carry a Bearer token** — it signs with SigV4. The
+JWT path is a plain HTTPS POST, and the ARN is a path segment so every `:` and `/` must be
+escaped:
+
+```python
+import urllib.parse, httpx, json
+
+url = (f"https://bedrock-agentcore.{region}.amazonaws.com"
+       f"/runtimes/{urllib.parse.quote(runtime_arn, safe='')}/invocations?qualifier=DEFAULT")
+
+httpx.post(url, content=json.dumps({"prompt": "..."}).encode(), headers={
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json",
+    "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": session_id,   # 33+ chars
+})
+```
+
+**The 401 is discoverable.** The `WWW-Authenticate` header carries a resource-metadata
+URL (RFC 7235 / RFC 9728), so a client can find the authorization server rather than being
+told out of band. SigV4-configured agents return 403 with no such header.
+
 ---
 
 ## 2LO vs 3LO
