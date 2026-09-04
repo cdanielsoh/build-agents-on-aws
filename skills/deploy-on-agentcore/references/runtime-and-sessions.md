@@ -24,6 +24,75 @@ This means:
 
 The correct pattern is a **singleton Session** initialized on first request and reused for the lifetime of the container.
 
+### Verified
+
+Measured on a deployed runtime, because "global state persists" is the claim everything
+else rests on. A module-level agent with `SESSION_BACKEND=memory` and **no external
+store** served a three-turn conversation in which turn 2 said "what are **its**
+prerequisites" and turn 3 said "which of **those** also lead to X". Both referents
+resolved correctly. Neither is answerable without the prior turns in context, so the
+microVM retained `agent.messages` across invocations.
+
+Practical consequence: an agent moving onto Runtime can usually **delete** its session
+store, its session cache, and its flush policy outright — not replace them.
+
+### Cold start
+
+| | Measured |
+|---|---|
+| First invoke on a new session (includes microVM provisioning) | **3.46s** |
+| Subsequent invokes, same session | **1.50s** |
+| **microVM start overhead** | **~1.96s** |
+
+Identical prompt, three runs each. ~2s is invisible against a multi-second agent turn,
+which is what makes per-session compute viable at all — but it is not zero, so a client
+that fails to send a consistent session ID pays it on **every** request.
+
+A measurement caution: comparing a simple first turn against more complex later turns
+produced a *negative* overhead. Hold the prompt constant.
+
+### Quotas that shape the design
+
+Verified via `aws service-quotas list-aws-default-service-quotas --service-code
+bedrock-agentcore`. Check `list-service-quotas` too — an account may already have
+increases applied.
+
+| Quota | Default | Adjustable |
+|---|---|---|
+| **Request timeout** | **15 min** | **No** |
+| Max payload (request and response) | 100 MB | No |
+| Docker image size | 2 GB | No |
+| Active session workloads per account | 5,000 | Yes |
+| New session creation rate | 25/s | Yes |
+| Runtime data plane rate | 1,000/s | Yes |
+| Endpoints per agent | 10 | Yes |
+| Versions per agent | 1,000 | Yes |
+
+The 15-minute timeout is the one to design around: a turn that can exceed it must become
+an async background task reporting `HealthyBusy` from `/ping` and polled separately.
+
+**Region availability: probe, do not trust a list.** Confirmed present in `us-east-1`,
+`us-west-2`, `ap-northeast-1`, `ap-northeast-2`, `eu-central-1`, `eu-west-1`,
+`ap-southeast-2` via `list-agent-runtimes`. Widely-repeated material still claims four
+regions.
+
+### ARM64 is required, and the error names the wrong culprit
+
+`linux/arm64` only. An amd64 image does not fail informatively: it **pulls successfully**,
+the container is Created and Started, then dies with
+
+```
+exec /usr/local/bin/python: exec format error
+```
+
+which presents as an application crash loop. Check image architecture against the host
+before debugging the application. (The same error appears in reverse on EKS if an arm64
+image lands on an amd64 node — EKS Auto Mode's built-in `general-purpose` NodePool is
+hardcoded to amd64, so running one image on both platforms needs a Graviton NodePool.)
+
+For what any of this costs, see **[cost-and-billing.md](cost-and-billing.md)** — session
+lifetime is the dominant meter, not CPU.
+
 ---
 
 ## AgentCore Runtime Entrypoint

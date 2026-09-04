@@ -66,7 +66,27 @@ Each MCP tool becomes one action, named `<target-name>___<tool-name>`:
 AgentCore::Action::"RefundTool___process_refund"
 ```
 
-All tool actions inherit from `CallTool` → `Mcp`, so you can permit at the hierarchy level.
+**There is no action hierarchy to permit at.** `action in AgentCore::Action::"Mcp"` is
+rejected at `CreatePolicy` with `ValidationException: invalid action ID "Mcp"`, and
+`"CallTool"` fails the same way. `"ListTools"` fails differently and more informatively —
+`Target 'ListTools' does not exist in gateway '<id>'. Available targets: catalogTools` —
+which shows why: the action namespace is **target-scoped**, so the only valid action IDs
+are `<target-name>___<tool-name>`.
+
+Consequence for a broad permit: enumerate the actions rather than reaching for a parent.
+
+```
+permit(
+  principal is AgentCore::OAuthUser,
+  action in [
+    AgentCore::Action::"catalogTools___get_course",
+    AgentCore::Action::"catalogTools___search_courses"
+  ],
+  resource == AgentCore::Gateway::"<gw-arn>"
+);
+```
+
+Verified against a live gateway in us-east-1.
 
 ### Context
 
@@ -285,6 +305,55 @@ ambiguous (0.4–0.7) bands and classify them by hand.
 Changes are **eventually consistent** — a few seconds to reach the evaluation path. Plan
 observation windows accordingly; do not treat promotion as instantaneous.
 
+### What a denial actually looks like
+
+Measured end to end on a live gateway in `ENFORCE`, with a `forbid` on one tool:
+
+```json
+{"jsonrpc":"2.0","id":3,"error":{"code":-32002,
+ "message":"Tool Execution Denied: Tool call not allowed due to policy enforcement
+            [Policy evaluation denied due to ForbidDelete2-n8e26oesyj]"}}
+```
+
+Two properties worth relying on:
+
+- **The backing tool is never invoked.** The Lambda target behind the forbidden tool
+  returned a distinctive marker if reached; it never appeared. Enforcement is at the
+  Gateway boundary, ahead of the tool and outside the agent's reasoning — which is why it
+  holds under prompt injection.
+- **The denial names the deciding policy** (`ForbidDelete2-…`), so a denial is auditable
+  and debuggable without reconstructing the evaluation.
+
+The contrast is the argument for having a policy engine at all. On the *same* gateway with
+a working `CUSTOM_JWT` authorizer and **no** policy engine, any holder of a valid token
+invoked the destructive tool successfully. Authentication established who was calling and
+constrained nothing about what they could do.
+
+### Gateway role permissions — grant the whole set up front
+
+The failure mode is one missing action per error, so discovering these incrementally costs
+a round trip each. Grant all of them, on **both** the engine and gateway ARNs:
+
+```json
+{"Action": ["bedrock-agentcore:GetPolicyEngine",
+            "bedrock-agentcore:ListPolicies",
+            "bedrock-agentcore:GetPolicy",
+            "bedrock-agentcore:AuthorizeAction",
+            "bedrock-agentcore:PartiallyAuthorizeActions"],
+ "Resource": ["arn:aws:bedrock-agentcore:<region>:<acct>:policy-engine/*",
+              "arn:aws:bedrock-agentcore:<region>:<acct>:gateway/*"]}
+```
+
+`AuthorizeAction` is checked against the policy-engine ARN *and* the gateway ARN
+separately — granting it on only one produces a second, near-identical error. `UpdateGateway`
+validates the whole set eagerly, so a missing permission fails the attach rather than
+failing later at invoke time.
+
+**The policy engine must be in the same region as the gateway.** A cross-region engine
+cannot be attached. Note that the AgentCore MCP server defaults to `us-west-2`, so
+`policy_engine_create` via MCP tooling can silently build the engine in the wrong region —
+pass an explicit region, or create it with the CLI.
+
 ---
 
 ## Validation Findings
@@ -309,6 +378,38 @@ Note the difference in scope: **create/update validation considers the new polic
 interactions with all existing policies** in the engine, whereas **generation validates each
 candidate policy in isolation**. A generated asset marked `VALID` can therefore still produce
 findings when you promote it.
+
+### The default mode rejects a targeted `forbid`
+
+Measured, and worth expecting: a blanket `forbid` on a single destructive tool is refused
+under the default `FAIL_ON_ANY_FINDINGS` with
+
+> Overly Restrictive: Policy Engine will deny every request for the specified principal
+> (`AgentCore::OAuthUser`), action (`catalogTools___delete_course`) and resource … if the
+> policy is added or updated
+
+— reported once per principal type. The finding is technically accurate and practically
+backwards: denying every request for that action is exactly the intent of a forbid. It
+creates cleanly with `IGNORE_ALL_FINDINGS`.
+
+So the commonest security pattern in this system — broad permit, targeted forbid on the
+dangerous tool — requires an explicit override. Read the findings, confirm the principal
+and action named are the ones you meant, then override.
+
+### `CreatePolicy` returns success and then fails asynchronously
+
+A 200 from `create-policy` means accepted, not valid. Policies transition
+`CREATING → ACTIVE | CREATE_FAILED`, and the reason appears only in `statusReasons`:
+
+```bash
+aws bedrock-agentcore-control get-policy \
+  --policy-engine-id <engine> --policy-id <policy> \
+  --query '{status:status,reasons:statusReasons}'
+```
+
+Measured: two of four policies reached `CREATE_FAILED` after a successful-looking create.
+Always poll. A deploy script that checks only the exit code will report a policy engine
+that authorizes nothing as successfully configured.
 
 ---
 
@@ -341,6 +442,29 @@ await policy_create(
 - Review before promoting. Note that the example intent above ("between 9am and 5pm") is not
   expressible from request context — expect `NOT_TRANSLATABLE` or a policy that does something
   other than what you asked.
+
+### Measured: generation over-generalises in both directions
+
+Asked for the simplest possible pair — *"Allow any authenticated caller to invoke the
+`get_course` tool. Forbid all callers from invoking the `delete_course` tool under any
+circumstances"* — generation produced two assets and the reasoning layer flagged **both**:
+
+| Asset | Finding |
+|---|---|
+| the permit | `ALLOW_ALL` — *"permits all actions for all principals"* |
+| the forbid | `DENY_ALL` — *"denies all actions for all principals"* |
+
+Neither matched the intent, and neither was promotable under the default validation mode.
+Hand-written Cedar for the same intent was two short statements.
+
+Read that as the reasoning layer working, not the feature failing — it caught the
+over-generalisation rather than shipping it. But treat generation as a **draft that
+requires review**, not a way to avoid learning Cedar. For anything you could write by
+hand in five lines, write it by hand.
+
+One operational note: the CLI may render `definition` as `SDK_UNKNOWN_MEMBER` when the
+local botocore model lags the service, so the generated Cedar text is not visible in
+`list-policy-generation-assets` output. Inspect via the console or upgrade botocore.
 
 ---
 

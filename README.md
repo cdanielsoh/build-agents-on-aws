@@ -52,6 +52,7 @@ skills, MCP servers, templates, and workflow procedures.
 |-------|---------------|
 | **strands-agent-design** | Design well-architected agents with Strands Agents SDK — prompt architecture for cache efficiency, tool API design, security patterns, context window management, agent topology selection, meta-tooling, and evaluation with Strands Evals SDK. |
 | **deploy-on-agentcore** | Deploy agents on Bedrock AgentCore — runtime containers, MCP Gateway (tool/HTTP/inference targets, REQUEST+RESPONSE interceptors, rate limits), Identity (2LO/3LO outbound auth), Cedar Policy authorization, Agent Registry, managed Evaluations, Observability, AgentCore Memory, streaming protocol, and CDK infrastructure. |
+| **migrate-eks-to-agentcore** | Assess and execute a migration of an existing agentic service from EKS to AgentCore Runtime — session topology classification, EKS-vs-AgentCore cost comparison, per-component migrate/keep/delete verdicts, and a phased playbook with rollback. Platform detail is not duplicated here; it points into `deploy-on-agentcore`. |
 
 Skills activate automatically when relevant context is detected — mention Strands SDK, agent design, AgentCore, MCP Gateway, CDK, or related topics.
 
@@ -60,6 +61,8 @@ Skills activate automatically when relevant context is detected — mention Stra
 | Workflow | Claude Code | Codex | Kiro CLI | What it does |
 |----------|-------------|-------|----------|--------------|
 | New agent | `/new-agent [dir]` | `$new-agent [dir]` | `/new-agent [dir]` | Scaffold a runnable Strands + AgentCore project from `templates/` |
+| Assess a migration | `/assess-agentcore-migration [repo]` | `$assess-agentcore-migration [repo]` | `/assess-agentcore-migration [repo]` | Assess an EKS-hosted agent for migration; emits an editable decision record |
+| Plan a migration | `/plan-agentcore-migration` | `$plan-agentcore-migration` | `/plan-agentcore-migration` | Turn that record into a phased plan plus scaffolding. Makes no live changes |
 
 ## How the Skills Relate
 
@@ -73,9 +76,14 @@ Security Patterns ────────────────────�
 Context Management ───────────────────► AgentCore Memory
 Agent Topology ───────────────────────► CDK Infrastructure
 Testing with Evals ───────────────────► Observability + Evaluations
+
+              migrate-eks-to-agentcore
+              (how to get there from what you already run)
+                          │
+        assess ──► decide ──► plan ──► then deploy-on-agentcore builds it
 ```
 
-Start with **strands-agent-design** when building a new agent from scratch. Move to **deploy-on-agentcore** when you're ready to deploy.
+Start with **strands-agent-design** when building a new agent from scratch. Move to **deploy-on-agentcore** when you're ready to deploy. Use **migrate-eks-to-agentcore** when an agent already runs somewhere else and the question is whether — and which parts — to move.
 
 ## MCP Servers
 
@@ -158,7 +166,8 @@ Data Store(s)                      ── DynamoDB, RDS, or existing APIs
 
 | Reference | Covers |
 |-----------|--------|
-| `runtime-and-sessions` | VM-per-session model, BedrockAgentCoreApp, SessionBuilder, singleton pattern |
+| `runtime-and-sessions` | VM-per-session model, BedrockAgentCoreApp, SessionBuilder, singleton pattern, **measured cold start & quotas**, ARM64 |
+| `cost-and-billing` | **What AgentCore costs and how to reduce it** — CPU vs memory asymmetry, idle-session billing, `StopRuntimeSession`, whether you need Memory |
 | `gateway-and-mcp` | MCP Gateway, **REQUEST + RESPONSE interceptors**, inference targets, native tool search, rate limits, Lambda MCP servers |
 | `security` | Multi-layer authorization, JWT token propagation, DynamoDB LeadingKeys, PostgreSQL RLS |
 | `identity` | **2LO vs 3LO outbound auth**, credential providers, token vault, per-user downstream tokens |
