@@ -37,6 +37,11 @@ private OIDC issuer inside your VPC. They do not make the Gateway private. A Lam
 target needs neither: the Gateway invokes it through the Lambda API, so a Lambda in
 your VPC works with no Lattice configuration.
 
+For the mechanics of putting a target on a private resource — the publicly-trusted-cert
+prerequisite, `routingDomain`, and the traps — see
+[gateway-private-targets.md](gateway-private-targets.md), which was verified by
+deploying both target types end to end.
+
 ## Putting the runtime in a VPC
 
 ```python

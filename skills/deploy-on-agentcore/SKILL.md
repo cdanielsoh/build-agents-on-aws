@@ -121,6 +121,9 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Attach to an existing VPC (BYO-VPC)                 | `references/vpc-and-network-isolation.md` |
 | Answer "is everything inside our VPC?"              | `references/vpc-and-network-isolation.md` |
 | Reach a private target or private OIDC issuer       | `references/vpc-and-network-isolation.md` |
+| **Onboard a private OpenAPI or self-hosted MCP target** | `references/gateway-private-targets.md` |
+| Get a publicly trusted cert for a private endpoint  | `references/gateway-private-targets.md` |
+| Debug a `privateEndpoint` target that will not connect | `references/gateway-private-targets.md` |
 | **Name any resource** (hyphen vs underscore, length limits) | `references/naming.md`        |
 | Pick a session ID that Runtime *and* Memory both accept | `references/naming.md`            |
 | Scope Memory namespaces by tenant                   | `references/naming.md`                |
