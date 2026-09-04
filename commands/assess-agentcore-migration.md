@@ -90,7 +90,8 @@ gate0:
     # Do NOT bucket it with an unresolvable blocker; see constraints.md's cost column.
     result: pass | trivial_fix | needs_redesign | fail | unknown
     compute_type_assumed: microvm | instances   # three gates flip between them
-    evidence: measured | verified | docs | reasoned | open
+    # Full tag set is defined in SKILL.md — keep these in sync.
+    evidence: measured:customer | measured:reference | read:source | stated:customer | verified | docs | reasoned | open
     note: <one line>
 
 topology:
@@ -143,7 +144,11 @@ inventory:
     # Binary present/absent hid six real findings on a live assessment — a component
     # that is thoroughly built and delivers nothing still reads as "present".
     state: present | present_but_ineffective | absent | absent_by_design | not_applicable | unknown
-    effective: true | false | unknown     # required when state starts with "present"
+    # Required when present_but_ineffective. `effective: false` alone was near-useless —
+    # measured across five records, 13 of 14 such rows said `false`, restating the state.
+    # never_invoked is the severe class: the control exists, reads as present in review, and
+    # has zero call sites. It is what makes a record `redesign_first` rather than migrate_plus.
+    ineffective_because: never_invoked | partially_covers | misconfigured | unverifiable
     evidence: <file:line, or why unknown>
     verdict: migrate | migrate_plus | keep | delete | regress | stay | gap | correctly_absent
     note: <one line>
@@ -155,10 +160,27 @@ current_gaps:
     gap: no golden eval set
     severity: high | medium | low
     in_scope: true | false | undecided
+    # Severity does not imply sequence. Without this, /plan reconstructs Phase 0 from the
+    # free-text `recommendation` comment — which on a real record omitted one of its own
+    # two TOP FINDINGS, so the generated plan shipped with no destructive-action gate.
+    fix_first: true | false              # belongs in Phase 0 / R1, before any platform move
+
+# Artifacts you needed and could not read. Often one cause behind many `unknown`s: on a real
+# record an unversioned ConfigMap was the sole source of 16 env vars and produced three
+# blocking unknowns. That is the most actionable line in the record — do not bury it in a
+# comment. Absent here means "I had everything", so leaving it off is a claim.
+missing_artifacts:
+  - artifact: <what, e.g. ConfigMap copilot-config>
+    blocks: [<practice ids or gate names>]
+    how_to_get_it: <one line>
 
 lens_coverage:
   scope: questions_only                # NOT a Well-Architected review
-  questions_assessed: <n of 41>
+  questions_assessed: <n of 41>        # DISTINCT practices, not rows
+  # State both. inventory carries one row per *component*, so several rows share a practice:
+  # measured across five records, 41 distinct practices spanned 55-66 rows. A reader who
+  # counts rows and sees 66 against "41" concludes the coverage claim is inflated.
+  inventory_rows: <n>
   best_practices_assessed: 0           # the Lens has 150; this triage covers none of them
   not_assessed: [AGENTSEC09]           # with a reason per entry in open_questions
 
