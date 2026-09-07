@@ -45,8 +45,12 @@ throughout.** If the identity might be production, say so and confirm before pro
 → Owner: **`references/constraints.md`** (what the gates are, cost to resolve, escape hatches)
 → Method: **`references/assessment.md`** (the repo greps and the live AWS probes)
 
-Read thresholds live; never carry numbers in from the plugin. Record each gate as
-`pass | fail | needs_redesign` with an evidence tag.
+Read thresholds live; never carry numbers in from the plugin. Record each gate with an evidence
+tag and one of the `gate0[].result` values in the schema below — **`fail` is not the only
+non-pass**, and treating it that way turns cheap rebuilds into refusals.
+
+**Gate 0.0 first: is the agent a liftable unit at all?** Every other gate assumes it is. See
+`references/constraints.md`.
 
 **On a real blocker, stop the *cost and planning* work — not the inventory.** Reporting a
 blocker in ten minutes beats a thorough assessment of an impossible migration, and you should
@@ -59,15 +63,48 @@ So: report the blocker first and prominently, skip Gate 2 entirely, and still wa
 inventory. Note in `gate0` which compute type you gated against — three gates (GPU,
 architecture, session duration) differ between microVMs and Instances.
 
+**Exception — `not_a_liftable_unit` is not that kind of blocker.** Where Gate 0.0 finds the
+deployable unit is the platform rather than the agent, **do not skip Gate 2**: the recommendation
+becomes "keep the runtime, adopt what needs no move", and the customer still needs their current
+run rate to judge it. Skipping the economics there withholds the numbers from precisely the case
+where the answer is to stay. Record `result: not_a_liftable_unit`, keep going, and let the
+adoption path be the deliverable.
+
+## Step 1.5 — Use the service, before you read anything about it
+
+**Cheapest decisive step in the whole assessment, and it must come before the inventory walk.**
+Two independent assessments produced most of their sharpest findings here — a capability the agent
+advertises that has never worked, a fabricated citation, cross-conversation history bleed, a tool
+returning a resource that does not exist — and none was reachable from configuration. An earlier
+version of this command documented the technique in the method reference and never routed anyone
+to it, so assessors did not do it.
+
+→ Method: **`references/assessment.md`**, "Run the agent and read the answer"
+
+Minimum, if there is a running deployment you can reach:
+
+1. One turn. Read the **answer**, not the status code.
+2. A second turn with a **fresh** conversation id — reusing one returns history-influenced
+   answers that look like broken tool calls.
+3. Two turns on the **same** conversation id, concurrently. Does either answer reflect the
+   other's input?
+4. One turn that forces a tool call, then **check that tool's output against ground truth.**
+5. Compare what you saw against what the service **claims** — its description, its agent card,
+   its README. A false capability claim is a finding customers act on immediately.
+
+If you cannot invoke it, say so explicitly; it changes what the rest of the record can establish.
+
 ## Step 2 — Gate 1: walk the inventory
 
 → Owner: **`references/production-inventory.md`** — all 41 Well-Architected Agentic AI Lens
 *questions* (the Lens also has 150 best practices, which this does not cover), detection
-guidance, and a verdict per question. Start with the starred ones.
+guidance, and a verdict per question. **Read its "How to fill a row" block first** — the verdict
+column is one field of several, and not the one the customer acts on. Start with the starred ones.
 → Session topology has its own reference: **`references/topologies.md`**
 → Greps for the commonly-missed domains: **`references/assessment.md`**
 
-Record per practice: `state`, `evidence` (`file:line`), `verdict`, `note`.
+Record per row: `state`, `evidence` (`file:line`), `closed_by`, `requires_runtime_move`, `verdict`,
+`note` — plus `defect_owner` where a platform-supplied control is ineffective.
 
 **Do not shortcut to the components you expect to find.** Empty rows are the most valuable
 output. If you cannot assess a practice, record it `unknown` with the reason — never omit it.
@@ -109,7 +146,10 @@ gate0:
   - check: single_turn_duration        # see constraints.md for the gate list
     # trivial_fix = a real gate that a one-line change clears (e.g. an amd64 pin).
     # Do NOT bucket it with an unresolvable blocker; see constraints.md's cost column.
-    result: pass | trivial_fix | needs_redesign | fail | unknown
+    # not_a_liftable_unit: the deployable unit is the platform, not the agent (Gate 0.0).
+    # It is NOT `fail` — it reframes the engagement rather than ending it, and unlike `fail`
+    # it does not skip Gate 2.
+    result: pass | trivial_fix | needs_redesign | not_a_liftable_unit | fail | unknown
     compute_type_assumed: microvm | instances   # three gates flip between them
     # Full tag set is defined in SKILL.md — keep these in sync.
     evidence: measured:customer | measured:reference | read:source | stated:customer | verified | docs | reasoned | open
@@ -146,15 +186,22 @@ topology:
   # implementation-named value fits one and not the other.
   concurrent_turn_safety: safe | serialized | last_write_wins | interleaved_history | unknown
 
+# evidence: <tag> means the full tag set from SKILL.md — measured:customer, measured:reference,
+# read:source, read:cluster, stated:customer, verified, docs, reasoned, open. A two-value
+# measured|open enum here could not say WHOSE workload a number came from, which is the whole
+# point of the tag table.
 measurements:
   # Order-of-magnitude context is REQUIRED next to any compute verdict: on a real customer
   # the compute delta was 0.04-1.2% of run rate, dominated by tokens and the datastore.
-  monthly_token_cost_estimate: { value: <usd>, evidence: measured | open }
-  monthly_datastore_cost: { value: <usd>, evidence: measured | open }
-  compute_share_of_run_rate: <pct>
+  monthly_token_cost_estimate: { value: <usd>, evidence: <tag> }
+  monthly_datastore_cost: { value: <usd>, evidence: <tag> }
+  # Required WHENEVER you state a compute verdict — but it is a ratio over monthly run rate, so
+  # at zero volume it is unsatisfiable and `open` is the correct answer. Do not invent a
+  # denominator, and do not let its absence license a compute verdict: no share means no verdict.
+  compute_share_of_run_rate: <pct> | open
   tokens_per_turn: { input: <n>, output: <n>, invocations_per_turn: <n> }
-  cpu_seconds_per_turn:  { value: <x>, evidence: measured | open }
-  wall_seconds_per_turn: { value: <y>, evidence: measured | open }
+  cpu_seconds_per_turn:  { value: <x>, evidence: <tag> }
+  wall_seconds_per_turn: { value: <y>, evidence: <tag> }
   # cgroup_memory_peak is the only true high-water mark and the quantity AgentCore bills on —
   # prefer it. But it needs a shell in the container, and a DISTROLESS image has none
   # (`kubectl exec -- sh` returns "executable file not found in $PATH"), while `kubectl debug`
@@ -162,7 +209,7 @@ measurements:
   # between a wrong label and an invalid one will write an invalid one.
   peak_memory_gb:
     value: <z>
-    evidence: measured | open
+    evidence: <tag>
     source: cgroup_memory_peak | kubelet_stats_summary | container_insights | unavailable
     # true ONLY for cgroup_memory_peak. Everything else is a sampled maximum, i.e. a floor on
     # the real peak — so it may understate the bill and must not be called a peak.
@@ -223,11 +270,18 @@ inventory:
     #   platform_config       — a field/flag their platform already ships, switched off
     #   customer_code         — their own code; no purchase, no platform change
     #   cluster_config        — RBAC, NetworkPolicy, secrets, resource limits
+    #   iam_policy            — an AWS role, policy or encryption setting. NOT cluster_config;
+    #                           two independent assessments had to invent this value
     #   upstream_contribution — third-party OSS with no such field yet; a PR or fork
     #   none                  — genuinely nothing closes it; say why in `note`
-    closed_by: platform_config | customer_code | cluster_config | upstream_contribution
+    closed_by: platform_config | customer_code | cluster_config | iam_policy
+             | upstream_contribution
              | gateway | policy | identity | memory | evaluations | observability
              | code_interpreter | browser | runtime | none
+    # For platform_config: did you confirm the field takes effect on the runtime they run?
+    # A field can be accepted and validated by the control plane and silently ignored by the
+    # executor. Unverified remedies are how a cheap recommendation becomes a wrong one.
+    remedy_verified: true | false | unverifiable
     # false for everything except runtime-coupled items (session isolation, inbound CUSTOM_JWT,
     # scale-to-zero, the duration ceilings). Report these FIRST — they are actionable now.
     requires_runtime_move: true | false
@@ -274,7 +328,13 @@ recommendation: migrate | migrate_partially | adopt_components | assess_only
 # Ordered adoption path, most valuable first. Everything with requires_runtime_move: false
 # comes before anything that needs a replatform, because it is what they can do this quarter.
 adoption_path:
-  - component: gateway | policy | identity | memory | evaluations | observability | runtime
+    # MUST accept every closed_by value, not just the AgentCore ones. When this enum was
+    # AgentCore-only, a record whose gaps mostly closed with a config flag could not put those
+    # first — so obeying it literally placed a purchase at position 1 on a service where almost
+    # nothing needed one, contradicting this file's own "lead with no-platform-change" rule.
+  - component: platform_config | customer_code | cluster_config | iam_policy
+             | upstream_contribution
+             | gateway | policy | identity | memory | evaluations | observability | runtime
     closes: [<practice ids>]
     requires_runtime_move: true | false
     # What their existing platform keeps doing afterwards. If this is empty for every entry,

@@ -5,6 +5,35 @@ The assessment instrument. It walks the **41 questions** of the
 (June 2026), adding two columns the Lens does not: **how to detect it in the customer's
 code**, and **the migration verdict**.
 
+## How to fill a row — read this before walking the questions
+
+**The `Verdict` column below is one field of several, and it is not the one the customer acts
+on.** This file used to emit only that column, so assessors walked 41 rows here and then had to
+reconstruct the rest of the record from a schema comment in another file — which is why
+schema-level defects kept surviving. Each row you walk produces:
+
+| Field | Answers | Note |
+|---|---|---|
+| `state` | does the control exist, and does it work? | `platform_provides` and `available_unconfigured` exist for mechanisms **the customer neither built nor switched on** — do not record an upstream success as their failure |
+| `ineffective_because` | *why* it does not work | `never_invoked` is the severe class: exists, reads as present in review, zero call sites |
+| `defect_owner` | whose bug is it — `customer`, `platform`, `operator_config`? | required when a **platform-supplied** mechanism is ineffective. Without it the record aims the fix at the wrong people |
+| `closed_by` | what closes it | **Non-AgentCore answers first** — `platform_config`, `customer_code`, `cluster_config`, `iam_policy`, `upstream_contribution`. Reaching for a component to make a row look productive is the failure mode |
+| `requires_runtime_move` | does acting on it need a replatform? | `false` for almost everything. These are what the customer can do this quarter, and they lead the report |
+| `Verdict` (this file's column) | migrate / keep / delete / gap / regress … | the **migration** shape only. On a service that is not migrating, it is the least useful field in the row |
+
+Two rules that follow, and that the tables below cannot express on their own:
+
+- **An empty detection result may mean the question does not apply to this stack**, not that the
+  control is absent. Recording `absent` there manufactures a finding. Use `not_applicable` or
+  `unknown` and say which.
+- **A remedy field the platform ships may itself be inert.** Observed: a field the CRD accepted,
+  validated, and the runtime silently ignored — reported only in a status condition. So
+  `closed_by: platform_config` is a claim to verify, not a conclusion; mark it unverified if you
+  could not confirm the field takes effect on the runtime they actually run.
+
+The full schema is in `/assess-agentcore-migration`. If this file and that schema disagree, the
+schema is authoritative and this file has drifted — say so.
+
 ## This is a triage, not a Well-Architected review
 
 Read this before quoting coverage to anyone.
