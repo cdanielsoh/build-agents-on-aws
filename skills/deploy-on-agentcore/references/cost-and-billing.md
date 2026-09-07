@@ -147,7 +147,7 @@ reduces the memory line proportionally. Performance work and cost work are the s
 |---|---|
 | CPU-seconds per turn | process CPU delta ÷ turns over a window |
 | Wall-clock per turn | p50 turn latency |
-| **Peak** memory | `kubectl top`, Container Insights, or the runtime's own metrics |
+| **Peak** memory | cgroup v2 `/sys/fs/cgroup/memory.peak` — a monotonic high-water mark, i.e. exactly what is billed here. **Not `kubectl top`**: it is a ~60s windowed average sampled on a delay, measured 3.7% below true peak, so it understates this meter. Where the image has no shell, the kubelet summary API gives a sampled maximum — a *floor* on the peak; label it as such |
 | Session lifetime | turns/conversation, think time, and whether sessions are stopped |
 
 **Bedrock token cost is excluded from all of the above and usually dominates the actual

@@ -166,8 +166,12 @@ alone is misleading. The model now labels it as marginal-only.
 
 **Costing from the manifest instead of the meter.** I first used the container's 1 GB
 memory *limit* and concluded memory was 5.6× CPU. Measured peak was **235 MiB**, making
-it 4.4× on the tuned config. The limit is not the bill. Measure peak with `kubectl top`
-or Container Insights — and peak, not average, because of the high-water mark.
+it 4.4× on the tuned config. The limit is not the bill. Measure **peak**, not average, because of
+the high-water mark — and **not with `kubectl top`**, which is a ~60s windowed average sampled on
+a delay and read 3.7% below true peak when checked against ground truth. Use cgroup v2
+`/sys/fs/cgroup/memory.peak`, a monotonic high-water mark and the exact quantity AgentCore bills
+on. Fallbacks when the image has no shell, and how to label them, are in
+[assessment.md](assessment.md).
 
 **Ignoring latency as a cost lever.** Wall time is the memory meter. Fixing blocking
 I/O on the event loop cut p50 latency 39% `[measured]`, which cuts the AgentCore memory
@@ -182,7 +186,7 @@ document are **not** a substitute.
 |---|---|
 | CPU-seconds per turn | container CPU delta ÷ turns over a window |
 | Wall-clock seconds per turn | p50 turn latency from traces |
-| **Peak** container memory | `kubectl top pods`, Container Insights |
+| **Peak** container memory | cgroup v2 `/sys/fs/cgroup/memory.peak`. **Not `kubectl top`** — see above |
 | Session shape | turns/conversation, think time, session lifetime |
 
 Then run the model both ways — default and tuned — and report the gap, because the gap

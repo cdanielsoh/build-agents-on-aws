@@ -240,5 +240,21 @@ implying a verified capacity figure. Two things you *can* state:
 - **Per-delegation session isolation multiplies the creation rate, not just the cap.** Where a
   delegation mints a fresh session per *call* rather than per conversation, the binding limit
   becomes the new-session **rate**, and it scales with tool-call volume rather than user volume.
+
+  **Read that as a capacity note, never as a reason to turn isolation off.** Stated alone it is
+  an argument for sharing sessions, and sharing is the more dangerous default by a wide margin.
+  Measured on a real multi-agent service: with isolation off, one sub-agent session was shared
+  across **every conversation and every user** reaching that pod — and the specialist answered a
+  brand-new conversation from another conversation's history, reporting infrastructure that did
+  not exist. So:
+
+  | Per-delegation isolation | Costs | Risks |
+  |---|---|---|
+  | **on** | more sessions, and the creation *rate* becomes the binding quota | none of the below |
+  | **off** | fewer sessions | **cross-conversation and cross-tenant history bleed**, and answers served from another conversation's state — which presents as confident, well-formatted, wrong |
+
+  Isolation is the safe default. Treat the quota as a thing to raise, not a reason to share
+  state, and if a customer has it off, check whether a shared session spans tenants before
+  anything else — that is a confidentiality finding, not a tuning choice.
 - **Shadow traffic inherits the same multiplier**, so a sampled share of mirrored conversations
   costs sample × N — which is the number to check before mirroring, not after.

@@ -19,11 +19,18 @@ the customer's choices binding rather than advisory.
 
 `--depth quick` walks only the starred practices and stops after Gate 2. Default is `full`.
 
-**Prefer `full`, and say what `quick` costs when you use it.** On one assessment the three
-sharpest findings — a fabricated citation, a platform feature failing 100% of writes, and a false
-capability claim in the service's own description — all sat on **unstarred** practices, so `quick`
-would have produced a clean-looking record that missed everything worth acting on. The stars mark
-what most often decides a *migration*, not what most often turns out to be broken.
+**Say what `quick` costs, and pick on evidence rather than by default.** The stars mark what most
+often decides a *migration*, not what most often turns out to be broken — so `quick` can miss the
+findings a customer would act on. Measured both ways: on one service the three sharpest findings
+(a fabricated citation, a platform feature failing 100% of writes, a false capability claim in its
+own description) were all on **unstarred** practices and `quick` would have produced a
+clean-looking record. On another, the four highest-severity findings were all on **starred**
+practices, and `quick` would have found them in a fraction of the time.
+
+So: `quick` is a legitimate first pass when the customer wants a fast read or you are triaging
+several services — **and say in the record that unstarred practices were not walked**, so nobody
+mistakes it for a clean bill. Choose `full` when the service is the one they are betting on, when
+anything looks off, or when a `quick` pass already found something.
 
 ## Step 0 — Locate the service and the account
 
