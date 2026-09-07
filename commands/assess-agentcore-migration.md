@@ -84,6 +84,14 @@ account: <id>
 region: <region>
 depth: quick | full
 
+# Who owns the code, because it decides whether `redesign_first` is even actionable and whether
+# `customer_agrees` means anything. On a third-party platform the remedies are chart config, an
+# upstream contribution or fork, and operator-owned cluster controls — none of which is
+# "redesign the service", and repeating `undecided` on every row reads as "we asked and they
+# have not replied" when in fact there is nobody to ask.
+engagement: customer | internal_reference | upstream_project
+code_ownership: customer_owned | third_party_oss | vendor_managed | mixed
+
 gate0:
   - check: single_turn_duration        # see constraints.md for the gate list
     # trivial_fix = a real gate that a one-line change clears (e.g. an amd64 pin).
@@ -111,14 +119,19 @@ topology:
   limit_exceeds_peak: true | false | unknown
   # Leave EMPTY unless you actually ran a sweep. Do not copy this example.
   measured_at_concurrency: []
-  flush_cadence: every_turn | every_n_turns | interval | on_evict | none
+  # per_event is finer than every_turn: state written synchronously mid-turn, several rows per
+  # turn. It inverts a conclusion — AgentCore Memory's per-turn write is then a WASH rather
+  # than the write-volume increase the topology reference prices.
+  flush_cadence: per_event | every_turn | every_n_turns | interval | on_evict | none
   # `none` is a real answer, not an omission — a team shipping it may have accepted the loss
   # deliberately. Migration then *improves* durability rather than costing writes.
   #
-  # last_write_wins understates the common case and made records read milder than the code:
-  # two concurrent turns mutating ONE in-memory messages list is not a lost write, it is
-  # interleaved history inside a single conversation, and no store-level fix addresses it.
-  concurrent_turn_safety: safe | serialized | last_write_wins | shared_object_race | unknown
+  # Name the EFFECT, not the mechanism. last_write_wins understates the common case: two
+  # concurrent turns on one conversation is not a lost write but interleaved history, and no
+  # store-level fix addresses it. Measured two ways on two platforms — a shared in-memory list,
+  # and an unserialized append-only table with no uniqueness constraint — so an
+  # implementation-named value fits one and not the other.
+  concurrent_turn_safety: safe | serialized | last_write_wins | interleaved_history | unknown
 
 measurements:
   # Order-of-magnitude context is REQUIRED next to any compute verdict: on a real customer
@@ -129,7 +142,18 @@ measurements:
   tokens_per_turn: { input: <n>, output: <n>, invocations_per_turn: <n> }
   cpu_seconds_per_turn:  { value: <x>, evidence: measured | open }
   wall_seconds_per_turn: { value: <y>, evidence: measured | open }
-  peak_memory_gb:        { value: <z>, evidence: measured | open, source: cgroup_memory_peak }
+  # cgroup_memory_peak is the only true high-water mark and the quantity AgentCore bills on —
+  # prefer it. But it needs a shell in the container, and a DISTROLESS image has none
+  # (`kubectl exec -- sh` returns "executable file not found in $PATH"), while `kubectl debug`
+  # mutates the pod. Allow the fallbacks and label them, because an assessor forced to choose
+  # between a wrong label and an invalid one will write an invalid one.
+  peak_memory_gb:
+    value: <z>
+    evidence: measured | open
+    source: cgroup_memory_peak | kubelet_stats_summary | container_insights | unavailable
+    # true ONLY for cgroup_memory_peak. Everything else is a sampled maximum, i.e. a floor on
+    # the real peak — so it may understate the bill and must not be called a peak.
+    is_true_high_water_mark: true | false
   turns_per_conversation: <n>
 
 # Endpoint cost is conditional on the VPC's egress design, not on the platform.
@@ -155,7 +179,12 @@ inventory:
     component: outbound_3lo_oauth
     # Binary present/absent hid six real findings on a live assessment — a component
     # that is thoroughly built and delivers nothing still reads as "present".
-    state: present | present_but_ineffective | absent | absent_by_design | not_applicable | unknown
+    # platform_provides / available_unconfigured matter on a declarative or managed platform,
+    # where a mechanism exists that the customer neither built nor switched on. Without them,
+    # "upstream built this well and it ships off by default" is recorded as the customer's
+    # failure — which misattributes the fix as well as the fault.
+    state: present | present_but_ineffective | platform_provides | available_unconfigured
+         | absent | absent_by_design | not_applicable | unknown
     # Required when present_but_ineffective. `effective: false` alone was near-useless —
     # measured across five records, 13 of 14 such rows said `false`, restating the state.
     # never_invoked is the severe class: the control exists, reads as present in review, and
@@ -163,6 +192,14 @@ inventory:
     ineffective_because: never_invoked | partially_covers | misconfigured | unverifiable
     evidence: <file:line, or why unknown>
     verdict: migrate | migrate_plus | keep | delete | regress | stay | gap | correctly_absent
+    # Which AgentCore component would close this, and whether adopting it requires moving the
+    # runtime. This is the field the customer acts on. `none` when nothing applies — do not
+    # reach for a component to make a row look productive.
+    closed_by: gateway | policy | identity | memory | evaluations | observability
+             | code_interpreter | browser | runtime | none
+    # false for everything except runtime-coupled items (session isolation, inbound CUSTOM_JWT,
+    # scale-to-zero, the duration ceilings). Report these FIRST — they are actionable now.
+    requires_runtime_move: true | false
     note: <one line>
     customer_agrees: true | false | undecided
 
@@ -196,10 +233,35 @@ lens_coverage:
   best_practices_assessed: 0           # the Lens has 150; this triage covers none of them
   not_assessed: [AGENTSEC09]           # with a reason per entry in open_questions
 
-recommendation: migrate | migrate_partially | stay | redesign_first
+# The headline. `adopt_components` is the most common honest answer and is NOT a lesser
+# outcome: keep the runtime where it is, adopt the components that close real gaps.
+# `assess_only` is legitimate too — findings delivered, no change recommended yet, with the
+# condition that would change it named.
+recommendation: migrate | migrate_partially | adopt_components | assess_only
+               | stay | redesign_first
+
+# Ordered adoption path, most valuable first. Everything with requires_runtime_move: false
+# comes before anything that needs a replatform, because it is what they can do this quarter.
+adoption_path:
+  - component: gateway | policy | identity | memory | evaluations | observability | runtime
+    closes: [<practice ids>]
+    requires_runtime_move: true | false
+    # What their existing platform keeps doing afterwards. If this is empty for every entry,
+    # the recommendation has become an ultimatum — re-read it.
+    coexists_with: <what stays, and keeps working>
+    effort: <one line>
+
+# What is NOT recommended to change, stated explicitly so the customer can see the assessment
+# was not a pretext. An empty list here is a red flag, not a clean bill.
+keep_as_is: [<component>: <why it is already right>]
 # Two axes. A Gate 0 certainty with no telemetry is high/unavailable, not "low".
 recommendation_confidence: high | medium | low
-cost_confidence: high | medium | low | unavailable
+# Two axes. Complete per-turn measurements on a deployment with NO USERS means per_turn: high
+# and monthly: unavailable — there is no volume to multiply by. One combined value forces a
+# choice between implying a price you cannot give and denying measurements you have.
+cost_confidence:
+  per_turn: high | medium | low | unavailable
+  monthly: high | medium | low | unavailable
 open_questions: []
 
 dissent:
