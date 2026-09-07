@@ -144,13 +144,29 @@ customer's face": the cheapest of the four cases reported as the most expensive.
 |---|---|
 | **Nothing** (internal ClusterIP, no authorizer) | **additive greenfield** — there is no cutover, you are adding auth that did not exist. The *easiest* case |
 | **In-app JWT validation** already | **Migrate+, not breaking** — the same token, validated by the platform instead of in-process. Delete their verification code |
-| **ALB OIDC / API GW authorizer** | **Migrate+** — the authorizer moves; callers keep sending the same token |
+| **ALB OIDC / API GW authorizer** | **Migrate+** — the authorizer moves; callers keep sending the same token. **Read what the app does with that token before calling this a relocation** — see below |
 | **SigV4 callers** | **BREAKING**, and only this one |
 
 The breaking case, precisely: `CUSTOM_JWT` *excludes* SigV4 — a SigV4 caller gets 403 once a JWT
 authorizer is configured `[measured]`. Callers signing with SigV4 (typical service-to-service on
 EKS with Pod Identity) mean a coordinated cutover of every caller, or **two runtimes in
 parallel**. Phase 1, not Phase 3.
+
+**And in the proxy case, check whether the app validates the token at all — because
+`CUSTOM_JWT` is often the *first* real validation in the chain, which is a much stronger argument
+than "the authorizer moves."** Read the auth middleware; do not infer from the mode's name.
+Observed on a real platform, at `file:line`: a mode literally named `trusted-proxy` parsed the JWT
+payload with a comment saying validation had already happened upstream, and performed **no
+signature, issuer, audience or expiry check** anywhere in the release. Identity was additionally
+readable from a `user_id` **query parameter** ahead of the token's own `sub`. Two compounding
+facts made it worse: the sub-agents had **no auth middleware at all** on their own ports, and the
+proxy named as the root of trust was pointed at a Service that did not exist — so it had served
+zero user requests while reporting healthy.
+
+That inverts the pitch. Not "we relocate your authorizer" but **"today nothing verifies these
+tokens; the platform would."** It is also a live finding to report before any migration framing,
+per rule 4 — and the three cheap fixes (a NetworkPolicy, auth on the sub-agents, correcting the
+proxy's upstream) need no AgentCore at all, which is what makes the rest credible.
 
 **3LO is where the biggest win usually hides.** Hand-rolled per-user OAuth — PKCE, state,
 code exchange, refresh, encrypted token storage, revocation — is typically hundreds of lines

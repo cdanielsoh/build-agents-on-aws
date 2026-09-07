@@ -190,23 +190,31 @@ The three topologies above are about *session* state and say nothing about a sup
 delegating to specialists. That is an independent decision, and it has to be made before any
 runtime is created because it determines the IAM and network shape.
 
-**Reject the argument you will reach for first.** On EKS, splitting specialists into separate
-Deployments buys blast-radius and noisy-neighbour isolation. On AgentCore **that isolation is
-already free** — a microVM per session isolates by construction — so a "keep them separate for
-isolation" case built on their current Deployment layout evaporates on the target platform. A
-plan that leads with it is arguing from the source architecture.
+**Be careful with the first argument you reach for.** On EKS, splitting specialists into separate
+Deployments buys blast-radius and noisy-neighbour isolation. **Session** isolation is free on
+AgentCore — a microVM per session provides it by construction — so a case built only on that
+evaporates on the target platform.
 
-**The argument that survives is IAM scope.** One runtime hosting all specialists in-process means
-one execution role holding the union of every specialist's permissions — a log-reading agent that
-can also query the knowledge base and call every model. If they run N ServiceAccounts today,
-collapsing to one runtime is a **regression** in least privilege, and rebuilds a confused deputy
-inside the process. Record it as `regress` rather than letting the platform move quietly widen a
-boundary.
+**But do not over-apply it: session isolation is not tool-scope isolation.** Measured on a real
+multi-agent service, this correction mattered more than the original point. Two specialists held
+*different* tool sets; collapsing them into one runtime unions those sets **inside one microVM**,
+so every tool becomes reachable from every prompt. A microVM boundary does nothing about that,
+because the boundary is between *sessions*, not between *capabilities*. An assessor who dismissed
+the separation case lost a real finding.
+
+**The scope argument, stated carefully.** One runtime hosting all specialists in-process holds the
+union of their permissions — at the tool layer always, and at the IAM layer *if* their roles
+actually differ. **Check that they do** rather than assuming: observed three distinct
+ServiceAccounts all associated to **one** IAM role, so the IAM regression had already happened
+before any migration was discussed, and the only live regression was at the tool layer. Record it
+as `regress` where it is real, and where the roles are already shared, record that as its own
+finding — `available_unconfigured`, since the platform gave them per-agent ServiceAccounts and
+nobody scoped the roles.
 
 | | One runtime, agents-as-tools | One runtime per agent |
 |---|---|---|
 | Execution roles | 1, holding the union | N, each scoped |
-| Session workloads per conversation | 1 | **N** — check against the account quota, and it multiplies shadow traffic too |
+| Session workloads per conversation | 1 | **N**, and the multiplier is `[open]` — see below |
 | Memory billing | one peak | each runtime bills its own wall-clock, and a specialist's clock runs *inside* the supervisor's |
 | Delegation | in-process call | `InvokeAgentRuntime` — a tool-set change, plus an endpoint if VPC-resident |
 | Per-component rollback | no | yes, and it is what makes a phased cutover possible |
@@ -214,3 +222,23 @@ boundary.
 Neither is a default. Cost the options rather than inheriting the current shape — and if the
 record leaves it open, say the plan *chose* it and flag it, because it is not reversible after
 create.
+
+### The session-workload multiplier: what to record, since it cannot be derived
+
+An earlier version of this file said to "check N against the account quota" without defining the
+unit, which is not actionable — **"session workload" is not defined in this skill**, and three
+questions decide the number:
+
+- does in-process fan-out to a sub-agent consume more than one?
+- does a sub-agent invoked with the **same** session id share one, or mint another?
+- can one microVM host concurrent runs of the same session?
+
+None is answerable from the docs this plugin cites. So: derive the arithmetic from the
+**delegation fan-out** you can see, tag it `[reasoned]`, and mark the unit `[open]` rather than
+implying a verified capacity figure. Two things you *can* state:
+
+- **Per-delegation session isolation multiplies the creation rate, not just the cap.** Where a
+  delegation mints a fresh session per *call* rather than per conversation, the binding limit
+  becomes the new-session **rate**, and it scales with tool-call volume rather than user volume.
+- **Shadow traffic inherits the same multiplier**, so a sampled share of mirrored conversations
+  costs sample × N — which is the number to check before mirroring, not after.

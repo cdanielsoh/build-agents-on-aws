@@ -101,6 +101,36 @@ that needs a code change inside software the customer does not maintain. On a th
 platform the honest, valuable answer is usually: **their platform already ships a field for this
 and it is switched off** — which costs nothing and buys the credibility for everything else.
 
+### `requires_runtime_move: false` is this skill's load-bearing claim. Here is its actual status.
+
+Say it at the confidence it has earned, because the whole reframe rests on it and an assessor
+found it asserted only as the table above:
+
+| Claim | Status |
+|---|---|
+| Gateway/Policy can serve an agent **not** on AgentCore Runtime | `[docs]` + `[reasoned]` — Gateway is an MCP endpoint and Policy attaches to the Gateway; nothing ties either to Runtime. **Not yet demonstrated end to end from a non-Runtime caller by this plugin** |
+| **Cost/effort of doing so from inside a cluster** | `[verified]` and **not free** — see the TLS prerequisite below |
+| Memory/Identity adoptable without a runtime move | **only if the customer owns the executor** (previous table) |
+| Evaluations accepts their traces | **unverified per framework.** The reference names specific SDKs; a different runtime's trace format must be checked, not assumed |
+
+**Do not present the free-adoption path as demonstrated.** Present it as the design AgentCore
+supports, name what you have not verified, and where a customer needs certainty, say a
+proof-of-concept is the next step. That is still a far better conversation than a replatform, and
+it survives the customer testing it.
+
+### The Gateway adoption is cheap in *architecture* and not always in *effort*
+
+`gateway-private-targets.md` is explicit: **VPC egress requires the target endpoint to have a
+publicly trusted TLS certificate** — "not a self-signed cert, not a private-CA cert." A tool
+server on a plaintext ClusterIP Service, which is the normal in-cluster shape, therefore does not
+satisfy it as deployed. Reaching it means an ingress path with a real certificate, or relocating
+the tool behind something that already has one.
+
+So size it honestly: **Gateway is the cheapest adoption on the architecture axis and can still be
+weeks of work on EKS.** Saying "no runtime move" and implying "no work" is the version a customer
+catches. Check `gateway-private-targets.md` for the options before quoting effort, and note that
+its validated worked example is not an in-cluster one.
+
 **Never frame the result as abandoning what they built.** If they run a platform — theirs or a
 third party's — the recommendation is almost never "stop using it." It is "keep it, and put these
 two AgentCore components where the gaps are." An assessment that concludes with an ultimatum gets
