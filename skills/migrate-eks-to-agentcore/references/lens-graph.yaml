@@ -1,0 +1,178 @@
+# The 41 Agentic AI Lens questions as a dependency graph.
+#
+# Why this is data and not prose: the prose tables in production-inventory.md say how to DETECT
+# each thing, which is necessary but does not say whether you CAN. Access decides that, and a
+# reader cannot hold 41 access preconditions in their head — so they get guessed, and a question
+# nobody could answer gets recorded `absent`, which is a false finding about the customer.
+#
+# Feed the survey answers in and let scripts/lens_plan.py compute reachability. What it prints is
+# not advice; it is the walk.
+#
+# needs:      access classes required, ALL of them. See `access_classes` below.
+# after:      other questions that must be answered first, because this one's meaning depends on
+#             their answer. A dependency, not a preference.
+# substitute: what to do when `needs` is unmet. `null` means nothing substitutes — record
+#             `unknown` with the blocker, never `absent`.
+# only_if:    a shape condition. When false the honest state is `not_applicable`, not a gap.
+
+access_classes:
+  source:      "application source, at the revision deployed (survey S1)"
+  cluster:     "control-plane read — resource specs, schemas, RBAC, env (S2)"
+  logs:        "container logs and status conditions (S2). Read-only, no consent needed"
+  aws:         "live AWS API reads in THEIR account (S2 + account check)"
+  behaviour:   "sending requests to the agent (S4). Consent-gated; expect no"
+  load:        "generating concurrent load (S5). Consent-gated, more intrusive than behaviour"
+  telemetry:   "their existing metrics/traces with real traffic in them (S3)"
+  human:       "someone who can answer product and process questions (S6)"
+
+questions:
+
+  # ── Operational excellence ────────────────────────────────────────────────
+  AGENTOPS01:
+    needs: [human]
+    substitute: null          # runbooks and on-call cannot be inferred from a repo
+  AGENTOPS02:
+    needs: [source]
+    substitute: "prompts mounted into the running container, via cluster; tells you the value, not the lifecycle"
+  AGENTOPS03:
+    needs: [source]
+    substitute: "the running image tag and its mutability — a mutable tag is a finding on its own"
+  AGENTOPS04:
+    needs: [cluster]
+    substitute: "source, if tools are declared in-process"
+  AGENTOPS05:
+    needs: [cluster, logs]
+    substitute: null
+  AGENTOPS06:
+    needs: [source]
+    substitute: "CI config in the repo; absence of an eval directory is itself the answer"
+  AGENTOPS07:
+    needs: [aws]
+    substitute: "cluster-side dashboards or alarms, if any"
+
+  # ── Security ──────────────────────────────────────────────────────────────
+  AGENTSEC01:
+    needs: [cluster]
+    after: [AGENTPERF03]      # partitioning of long-term memory is moot until you know it exists
+    substitute: "stored session/memory rows and their key structure"
+  AGENTSEC02:
+    needs: [cluster]
+    after: [AGENTOPS04]       # you cannot reason about tool authz without the tool inventory
+    substitute: "the tool server's RBAC — what it COULD do — plus whether the allowlist is client- or server-side"
+  AGENTSEC03:
+    needs: [cluster]
+    substitute: "source, for in-app JWT validation; but read the middleware, do not infer from a mode name"
+  AGENTSEC04:
+    needs: [source, cluster]
+    after: [AGENTSEC02]       # authorization-inside-reasoning only matters once tool scope is known
+    substitute: "the system prompt as deployed, plus whether any guardrail is attached"
+  AGENTSEC05:
+    needs: [logs]
+    substitute: null
+  AGENTSEC06:
+    only_if: multi_agent
+    needs: [cluster]
+    after: [AGENTSEC03]       # identity survival across a hop presupposes knowing inbound identity
+    substitute: "the delegation config — whether caller identity is passed at all"
+  AGENTSEC07:
+    needs: [cluster]
+    after: [AGENTOPS04]
+    substitute: "the approval field's value across all agents, and its call sites — a control set nowhere is the finding"
+  AGENTSEC08:
+    needs: [cluster]
+    substitute: "guardrail attachment and input caps in config; effectiveness needs behaviour"
+  AGENTSEC09:
+    needs: [human, aws]
+    substitute: "node-level runtime threat detection presence via cluster — decides whether a managed move is a REGRESS"
+
+  # ── Reliability ───────────────────────────────────────────────────────────
+  AGENTREL01:
+    needs: [cluster]
+    substitute: null
+  AGENTREL02:
+    needs: [source]
+    substitute: "tool declarations in the resource spec, on a declarative platform"
+  AGENTREL03:
+    needs: [cluster]
+    substitute: "stored session rows: ordering, timestamps, and whether writes interleave"
+  AGENTREL04:
+    only_if: multi_agent
+    needs: [cluster]
+    substitute: "the delegation graph as declared"
+  AGENTREL05:
+    needs: [behaviour]
+    after: [AGENTPERF03]      # grounding correctness presupposes knowing what it retrieves from
+    substitute: "the claimed capability against the config that would implement it — a described corpus with no retrieval wiring is the same finding"
+  AGENTREL06:
+    needs: [source]
+    substitute: "whether write-capable tools exist at all, from the tool inventory"
+  AGENTREL07:
+    needs: [logs]
+    substitute: "retry and timeout configuration, if any is declared"
+  AGENTREL08:
+    needs: [behaviour]
+    substitute: "logs — a tool failure that fails the turn usually leaves a trace"
+
+  # ── Performance efficiency ────────────────────────────────────────────────
+  AGENTPERF01:
+    needs: [telemetry]
+    substitute: "logs, if request wall time is recorded; else `open` and say Gate 2 is unavailable"
+  AGENTPERF02:
+    needs: [telemetry]
+    after: [AGENTOPS04]
+    substitute: "tool count per agent as declared — an upper bound on hops, not a measurement"
+  AGENTPERF03:
+    needs: [cluster]
+    substitute: "source, for retrieval client construction"
+  AGENTPERF04:
+    needs: [cluster]
+    substitute: null
+  AGENTPERF05:
+    only_if: multi_agent
+    needs: [telemetry]
+    after: [AGENTREL04]
+    substitute: "the fan-out count as declared — coordination overhead is then reasoned, not measured"
+  AGENTPERF06:
+    needs: [cluster]
+    after: [AGENTOPS04]
+    substitute: "the tool catalogue size served to the model; result sizes need behaviour"
+  AGENTPERF07:
+    needs: [cluster]
+    after: [AGENTSEC01]       # noisy-neighbour control presupposes knowing the tenancy model
+    substitute: "declared rate limits and resource limits"
+
+  # ── Cost optimization ─────────────────────────────────────────────────────
+  AGENTCOST01:
+    needs: [source]
+    substitute: "budget/ceiling fields in the resource spec, on a declarative platform"
+  AGENTCOST02:
+    needs: [telemetry]
+    substitute: "prompt-caching config and the model id — tells you whether it COULD cache, not whether it does"
+  AGENTCOST03:
+    needs: [cluster]
+    after: [AGENTREL03]       # session lifetime is a property of the topology
+    substitute: "idle-timeout and retention settings as configured"
+  AGENTCOST04:
+    needs: [telemetry]
+    after: [AGENTOPS04]
+    substitute: "whether any result cache exists in config"
+  AGENTCOST05:
+    needs: [telemetry, logs]
+    substitute: "whether a tenant or user id is present in any emitted record — no identifier means attribution is impossible"
+  AGENTCOST06:
+    needs: [aws]
+    substitute: null
+  AGENTCOST07:
+    needs: [aws, human]
+    substitute: "AWS Budgets presence; review cadence needs a person"
+
+  # ── Sustainability ────────────────────────────────────────────────────────
+  AGENTSUS01:
+    needs: [cluster, telemetry]
+    substitute: "declared resource requests and limits versus measured peak, if any measurement exists"
+  AGENTSUS02:
+    needs: [source]
+    substitute: "the running image's own lockfile, read out of the container"
+  AGENTSUS03:
+    needs: [source]
+    substitute: "the service's own description and README against what the config implements — a false capability claim needs no source at all"
