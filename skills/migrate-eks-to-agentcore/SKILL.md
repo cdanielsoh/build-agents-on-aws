@@ -84,6 +84,23 @@ ones that need no platform change**, because those are the ones a customer can a
 quarter. A component adopted alongside their existing service is a real outcome; so is
 "assessed, nothing adopted yet, revisit when X changes."
 
+**Adoptability is `component × who owns the code`, not the component alone.** The table above
+holds when the customer owns the agent process. It does **not** hold on a third-party platform,
+and that column has already been wrong once in practice:
+
+| | Customer owns the agent code | Third-party platform runs it |
+|---|---|---|
+| **Gateway** | add a tool endpoint | **still yes** — usually just a URL on a config object, the cheapest adoption available |
+| **Policy** | yes | **yes**, behind Gateway |
+| **Memory**, **Identity** | add the SDK integration | **no** — needs an SDK call inside an executor you do not ship. It is an upstream PR or a fork, so say `upstream_contribution`, not "adopt Memory" |
+| **Evaluations** | yes | **verify first** — check their trace/export format is one Evaluations accepts before promising it |
+| **Observability** | yes | partly — platform-level flags may exist; SDK-level instrumentation does not |
+
+So establish `code_ownership` **before** writing the adoption path, and never promise a component
+that needs a code change inside software the customer does not maintain. On a third-party
+platform the honest, valuable answer is usually: **their platform already ships a field for this
+and it is switched off** — which costs nothing and buys the credibility for everything else.
+
 **Never frame the result as abandoning what they built.** If they run a platform — theirs or a
 third party's — the recommendation is almost never "stop using it." It is "keep it, and put these
 two AgentCore components where the gaps are." An assessment that concludes with an ultimatum gets

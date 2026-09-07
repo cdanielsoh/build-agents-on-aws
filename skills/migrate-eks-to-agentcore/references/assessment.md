@@ -79,6 +79,20 @@ Record the divergence itself — a repo ahead of production means the assessment
 evidence describes code the customer is not running, which silently invalidates every
 `[read:source]` tag in the record.
 
+**But you can usually recover `[read:source]` instead of abandoning it.** Most services log their
+own build identity at startup. Find it, resolve it to a tag or commit, and check that revision
+out — then `file:line` evidence describes the running binary again:
+
+```bash
+kubectl logs deploy/<name> | head -20 | grep -iE 'version|git_commit|build|revision'
+git ls-remote --tags <repo> | grep <version>      # confirm the tag points at that commit
+git -C <clone> checkout <commit>                  # now the tree matches production
+```
+
+One log line turned an unusable evidence class into a usable one on a real assessment — the
+controller printed `git_commit`, the tag resolved to the same SHA, and source reading became
+authoritative rather than suspect. Do this before concluding that source is unreadable.
+
 ### First: what is this written in, and is the logic even in a repo?
 
 **Establish the language and the shape before running any search.** Every pattern below is
@@ -265,6 +279,41 @@ kubectl get <kind> <name> -o yaml            # declared
 kubectl get deploy,sa,svc,cm -l <selector>   # what actually exists
 kubectl get <kind> <name> -o jsonpath='{.status}'   # the controller's own verdict — read it
 ```
+
+## Run the agent and read the answer — the highest-yield step, and it was missing
+
+Nothing above asks you to *use* the service. On one assessment this single step produced three of
+the top five findings, and none of them were reachable any other way:
+
+- **A capability claimed in its own description that has never worked.** The agent advertised
+  remembering user preferences; long-term memory had a 100% write-failure rate. Config, CRD
+  status and the database schema all agreed it was configured — only the invocation revealed it
+  did nothing.
+- **A fabricated citation.** The answer appended a source for a document it never retrieved,
+  invited by its own "cite what you used" prompt. No amount of config reading finds this.
+- **Concurrent-turn contamination, measured rather than argued.** Two simultaneous turns on one
+  conversation id: the second turn's model call saw the first turn's prompt. This is the one
+  finding on that service that genuinely required a runtime move, and it came from two `curl`s.
+
+So, with the customer's permission and against a non-production tenant where possible:
+
+```bash
+# 1. One clean turn. Read the ANSWER, not just the status code.
+# 2. Repeat with a FRESH conversation id — reusing one returns history-influenced answers that
+#    look like broken tool calls. This wasted real time.
+# 3. Two turns on the SAME conversation id, concurrently. Do both answers reflect only their own
+#    input? Then read the stored events: are they interleaved?
+# 4. Ask for something requiring a tool, then verify the tool's output against ground truth.
+#    A structured, confident table can still be stale or wrong.
+```
+
+**Cross-check at least one tool result against reality.** Observed: a cluster-inspection tool
+returned a pod that `kubectl` reported as `NotFound` — a read-only tool serving deleted resources.
+Plausible-looking output is not evidence.
+
+Then compare what you saw against what the service *claims* — its description, its agent card,
+its README. **A false capability claim is a finding**, and it is one customers act on immediately
+because it is embarrassing rather than theoretical.
 
 ## Reading the cluster — Auto Mode's defaults are not what a chart expects
 
