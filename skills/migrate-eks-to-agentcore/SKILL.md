@@ -344,6 +344,7 @@ building anything.**
 
 | File | Read when |
 |---|---|
+| [survey-and-plan.md](references/survey-and-plan.md) | **Start here.** The six access questions, and the check graph they produce — which checks are reachable, and what substitutes when one is not |
 | [assessment.md](references/assessment.md) | Running the assessment — what to read, probe, and ask |
 | [topologies.md](references/topologies.md) | Classifying their session design; A/B/C in depth |
 | [cost-model.md](references/cost-model.md) | Any cost conversation. The 22× swing, the crossover |
