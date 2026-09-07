@@ -169,10 +169,29 @@ exist.
 
 ## Step 2 — Gate 1: walk the inventory
 
-→ Owner: **`references/production-inventory.md`** — all 41 Well-Architected Agentic AI Lens
-*questions* (the Lens also has 150 best practices, which this does not cover), detection
-guidance, and a verdict per question. **Read its "How to fill a row" block first** — the verdict
-column is one field of several, and not the one the customer acts on. Start with the starred ones.
+**Resolve the graph first — do not decide reachability by eye.** The 41 questions have access
+preconditions and depend on each other, and nobody holds that in their head:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lens_plan.py" --access .agentcore-migration/decisions.yml \
+    --multi-agent yes|no|unknown
+```
+
+It prints four buckets — `reachable`, `degraded` (a prerequisite question is unanswerable),
+`blocked` (access missing), `not_applicable` (shape) — each with its blocker and the substitute to
+use. **That output is the walk.** Measured on real profiles: a repo-only engagement reaches 8 of 41;
+cluster plus logs plus invocation reaches 20. Handing a customer "your access decisions mean we can
+answer 8 of 41 questions" is often the most actionable line in the document.
+
+Anything not `reachable` goes in the record with its blocker, as `unknown` or `not_applicable`.
+**None of it is `absent`** — absent is a claim about their system, and this is a claim about your
+access. Conflating them is how this instrument has repeatedly manufactured gaps.
+
+→ Graph: **`references/lens-graph.yaml`** — preconditions, dependencies and substitutes per question.
+→ Owner: **`references/production-inventory.md`** — the 41 Lens *questions* (the Lens also has 150
+best practices, which this does not cover), how to detect each, and a verdict per question. **Read
+its "How to fill a row" block first** — the verdict column is one field of several, and not the one
+the customer acts on.
 → Session topology has its own reference: **`references/topologies.md`**
 → Greps for the commonly-missed domains: **`references/assessment.md`**
 
