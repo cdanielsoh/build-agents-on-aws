@@ -5,6 +5,26 @@ The assessment instrument. It walks the **41 questions** of the
 (June 2026), adding two columns the Lens does not: **how to detect it in the customer's
 code**, and **the migration verdict**.
 
+## Contents
+
+1. [How to fill a row — read this before walking the questions](#how-to-fill-a-row-read-this-before-walking-the-questions)
+2. [This is a triage, not a Well-Architected review](#this-is-a-triage-not-a-well-architected-review)
+3. [Provenance](#provenance)
+4. [Two rules](#two-rules)
+5. [Prioritising — not all 41 decide a migration](#prioritising-not-all-41-decide-a-migration)
+6. [Operational excellence (AGENTOPS)](#operational-excellence-agentops)
+7. [Security (AGENTSEC)](#security-agentsec)
+8. [Reliability (AGENTREL)](#reliability-agentrel)
+9. [Performance efficiency (AGENTPERF)](#performance-efficiency-agentperf)
+10. [Cost optimization (AGENTCOST)](#cost-optimization-agentcost)
+11. [Sustainability (AGENTSUS)](#sustainability-agentsus)
+12. [§Memory (AGENTREL03 + AGENTSEC01 + AGENTCOST03) — two tiers, opposite verdicts](#memory-agentrel03-agentsec01-agentcost03-two-tiers-opposite-verdicts)
+13. [§Tools and MCP (AGENTOPS04 + AGENTSEC02 + AGENTPERF06)](#tools-and-mcp-agentops04-agentsec02-agentperf06)
+14. [Three rows that need discussion, not a verdict](#three-rows-that-need-discussion-not-a-verdict)
+15. [Fix before migrating](#fix-before-migrating)
+16. [Sequencing the deletions](#sequencing-the-deletions)
+17. [Reporting](#reporting)
+
 ## How to fill a row — read this before walking the questions
 
 **The `Verdict` column below is one field of several, and it is not the one the customer acts

@@ -15,6 +15,16 @@ private-mcp___whoami -> {"server": "self-hosted FastMCP on Fargate", "private": 
   "task": "ip-10-70-3-116.ec2.internal", ...}
 ```
 
+## Contents
+
+1. [Which targets need this](#which-targets-need-this)
+2. [The prerequisite that blocks most people](#the-prerequisite-that-blocks-most-people)
+3. [routingDomain: read it, do not construct it](#routingdomain-read-it-do-not-construct-it)
+4. [Worked example](#worked-example)
+5. [Five things that will bite](#five-things-that-will-bite)
+6. [Debugging a target that will not work](#debugging-a-target-that-will-not-work)
+7. [Teardown](#teardown)
+
 ## Which targets need this
 
 | Target type | Private connectivity |
