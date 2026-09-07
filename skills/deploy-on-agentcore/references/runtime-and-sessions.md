@@ -86,8 +86,14 @@ regions.
 
 ### ARM64 is required, and the error names the wrong culprit
 
-`linux/arm64` only. An amd64 image does not fail informatively: it **pulls successfully**,
-the container is Created and Started, then dies with
+**This applies to the microVM compute type.** The **Instances** compute type supports
+**x86_64 and arm64** `[docs]`, so an amd64-only dependency is a blocker on microVMs and not on
+Instances — which can invert an architecture gate. This file is the owner of that fact;
+`migrate-eks-to-agentcore/references/constraints.md` previously stated it while naming this file
+as the source, so a reader checking the citation found nothing.
+
+For microVMs: `linux/arm64` only. An amd64 image does not fail informatively: it **pulls
+successfully**, the container is Created and Started, then dies with
 
 ```
 exec /usr/local/bin/python: exec format error

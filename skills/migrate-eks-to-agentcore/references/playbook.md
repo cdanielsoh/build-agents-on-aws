@@ -31,6 +31,23 @@ building one first. Many migrate on spot-checks.
 **Exit criteria:** current service measurably better; ARM64 image running in production on
 EKS. (A golden set if the customer chose to build one — not required to proceed.)
 
+## If there is more than one agent, phase by dependency — leaves first
+
+Every phase below is written for **one** deployable unit, and an assessor found this file has no
+multi-agent content at all. When a supervisor delegates to specialists:
+
+1. **Move leaves first.** A specialist nothing else calls can be stood up in parallel and compared
+   without touching a caller.
+2. **A non-leaf move changes a live caller**, because the delegation transport is part of the
+   caller's tool set — a code change plus a new permission on something already serving traffic.
+   That is Phase 2 work, not Phase 1.
+3. **Cut over in the same order**, callers last, and keep both delegation paths open until
+   decommission, or reversing the supervisor forces reversing every specialist under it.
+4. **Mixed mode is the steady state** for weeks, not a moment. Say which agents are where.
+
+→ the axis, the tool-scope-versus-session-isolation correction, and the session-workload
+multiplier live in [topologies.md](topologies.md).
+
 ## Phase 1 — parallel runtime, no traffic
 
 Deploy the same image behind `BedrockAgentCoreApp`. Invoke it directly. Compare answers
