@@ -1,45 +1,13 @@
 ---
 name: deploy-on-agentcore
 description: >
-  Build production-grade AI agents on AWS Bedrock AgentCore with Strands Agents,
-  MCP Gateway, Lambda-based MCP servers, and CDK infrastructure. Use this skill
-  whenever the user wants to build an agent on AgentCore, connect tools via MCP Gateway,
-  set up OAuth authentication for agents, add conversation memory with AgentCore Memory,
-  deploy Lambda-based MCP servers, understand the AgentCore streaming/interrupt protocol,
-  create secure agent architectures with row-level security, or use Strands Agents SDK
-  with BedrockAgentCoreApp. Trigger on mentions of: AgentCore, Strands Agents,
-  MCP Gateway, AgentCore Memory, BedrockAgentCoreApp, CfnRuntime, CfnGateway,
-  or agent + Lambda + MCP patterns. Also trigger when users ask about
-  multi-layer authorization in agent systems or token propagation chains.
-  Trigger on outbound authorization topics: AgentCore Identity, 2LO, 3LO,
-  two-legged or three-legged OAuth, client credentials vs authorization code,
-  USER_FEDERATION, M2M auth flow, token vault, workload identity,
-  OAuth2 credential provider, requires_access_token, requires_api_key,
-  CompleteResourceTokenAuth, GetResourceOauth2Token, per-user downstream
-  tokens, offloading a hand-rolled OAuth implementation, or connecting an
-  agent to ServiceNow / Okta / Google / GitHub / Salesforce on a user's behalf.
-  Trigger on authorization-policy topics: AgentCore Policy, policy engine,
-  Cedar policy, Cedar schema, permit/forbid statements, AgentCore::OAuthUser,
-  AgentCore::Gateway, tool-level authorization, fine-grained access control
-  for tools, LOG_ONLY vs ENFORCE, enforcementMode, policy generation,
-  LogOnlyDecisionFlips, or guardrails in policy.
-  Trigger on evaluation topics: AgentCore Evaluations, built-in evaluators,
-  Builtin.Helpfulness, Builtin.GoalSuccessRate, trajectory match evaluators,
-  online / on-demand / batch / dataset evaluation, custom evaluator,
-  code-based evaluator, LLM-as-a-judge for agents, evaluating a deployed
-  agent from traces, agent quality monitoring, DeepEval or AutoEval on
-  AgentCore, simulated scenarios, actor profile, or convert_strands_to_adot.
-  Trigger on observability topics: AgentCore Observability, ADOT,
-  aws-opentelemetry-distro, opentelemetry-instrument, unified vs split
-  telemetry, UNIFIED_TRACES_DESTINATION_ENABLED, CloudWatch Transaction
-  Search, aws/spans, otel-rt-logs, runtime-logs, gen_ai semantic conventions,
-  invoke agent / inference / execute tool spans, custom spans for agents,
-  or missing agent logs and traces.
-  Trigger on interceptor topics: gateway interceptor, REQUEST interceptor,
-  RESPONSE interceptor, interceptionPoints, passRequestHeaders, payloadFilter,
-  RESPONSE_BODY exclusion, transformedGatewayRequest,
-  transformedGatewayResponse, isStreamingResponse, interceptor short-circuit,
-  redacting a gateway response, or the interceptor 6 MB payload limit.
+  Build and deploy production-grade agents on Amazon Bedrock AgentCore with
+  Strands Agents. Use for Runtime and BedrockAgentCoreApp, MCP Gateway targets
+  and interceptors, Identity OAuth flows, Cedar Policy, Memory, Agent Registry,
+  Evaluations, observability, VPC networking, streaming and interrupts, and CDK
+  infrastructure. Trigger on AgentCore deployment,
+  authentication, authorization, gateway, memory, evaluation, telemetry,
+  networking, or session questions.
 ---
 
 # Building Agents on AWS Bedrock AgentCore
