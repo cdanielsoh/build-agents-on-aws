@@ -20,20 +20,20 @@ Only the last row is a question. Everything above it is work.
 
 ## Contents — and the order to actually use them
 
-The sections are grouped by *kind of work*, not by the order you should do it in. **If there is a
-running deployment, the cheap decisive reads are §4 and §5, and they beat §3 on findings per
-minute.** Three independent assessments each reported their sharpest findings coming from §4 while
-§3's source searches returned nothing useful — one against a tree that did not exist at all.
+The sections are grouped by *kind of work*, not by the order you should do it in. **The cheapest
+decisive read is the logs, and it needs nobody's permission** — three assessments each found more
+there and in §2 than in §3's source searches, one of which ran against a tree that did not exist.
+§4's invocation half is consent-gated and often unavailable; do not plan the assessment around it.
 
 | | Section | When |
 |---|---|---|
 | §1 | [Two things to establish before anything else](#two-things-to-establish-before-anything-else) | always, first — is there a deployment, and whose account are you in |
 | §2 | [Reading the cluster](#reading-the-cluster-auto-modes-defaults-are-not-what-a-chart-expects) | whenever a deployment exists; it outranks source |
 | §3 | [Reading the repo](#reading-the-repo) | when application source exists **and** matches what is deployed. Skip most of it for a declarative platform — the fork is at "First: what is this written in" |
-| §4 | [Run the agent and read the answer](#run-the-agent-and-read-the-answer-the-highest-yield-step-and-it-was-missing) | **start here if you can reach it.** Logs first, then a few turns |
+| §4 | [Run the agent and read the answer](#run-the-agent-and-read-the-answer-high-yield-and-usually-not-available) | **logs always** — read-only. Invoking needs consent and is often refused; substitutes are in that section |
 | §5 | [Probing AWS](#probing-aws-verify-never-recall) | quotas, region availability, prices — read live, never recalled |
 | §6 | [Measuring](#measuring-prefer-what-already-exists) | Gate 2. Check the billing floor before investing in precision |
-| §7 | [Concurrency sweep](#measure-across-a-concurrency-sweep-but-not-before-the-cheap-reads) | when you need per-turn numbers under load. Not before §4 |
+| §7 | [Concurrency sweep](#measure-across-a-concurrency-sweep-but-not-before-the-cheap-reads) | only with the same consent invoking needs, and only when you need load numbers |
 | §8 | [Asking — Gate 3](#asking-gate-3-and-why-it-is-short) | last, and only what you could not derive |
 | §9 | [Confidence — two axes](#confidence-two-axes-not-one) | when writing the record |
 
@@ -98,19 +98,37 @@ Record the divergence itself — a repo ahead of production means the assessment
 evidence describes code the customer is not running, which silently invalidates every
 `[read:source]` tag in the record.
 
-**But you can usually recover `[read:source]` instead of abandoning it.** Most services log their
-own build identity at startup. Find it, resolve it to a tag or commit, and check that revision
-out — then `file:line` evidence describes the running binary again:
+### The evidence hierarchy — stay inside their system
 
-```bash
-kubectl logs deploy/<name> | head -20 | grep -iE 'version|git_commit|build|revision'
-git ls-remote --tags <repo> | grep <version>      # confirm the tag points at that commit
-git -C <clone> checkout <commit>                  # now the tree matches production
-```
+Rank sources by how close they are to what is actually running, and **exhaust each level before
+descending**:
 
-One log line turned an unusable evidence class into a usable one on a real assessment — the
-controller printed `git_commit`, the tag resolved to the same SHA, and source reading became
-authoritative rather than suspect. Do this before concluding that source is unreadable.
+| | Source | Tag |
+|---|---|---|
+| 1 | **Behaviour** — invoke it, read the answer, read the logs | `measured:customer` |
+| 2 | **The deployed control plane** — resource specs, served schemas, RBAC, env, status conditions | `read:cluster` |
+| 3 | **The customer's own repo** | `read:source` |
+| 4 | **Files inside the running image** — `kubectl exec -- cat`, or the mounted config the controller generated | `read:cluster` |
+| 5 | Third-party source, **only** if 1–4 cannot answer a question that changes the recommendation | `read:source` + say it is upstream, not theirs |
+
+**Never let public material stand in for a finding about their system.** Reading AWS docs or a
+vendor's documentation is fine and often necessary — that is what `[docs]` is for. What is not fine
+is inferring what *this deployment does* from what the software is *meant* to do. The gap between
+those two is where nearly every real finding lives: a shipped field the runtime ignores, a control
+with zero call sites, a proxy that has never served a request. Levels 1 and 2 distinguish them;
+documentation cannot.
+
+Two habits that follow:
+
+- **Watch how much of your evidence is level 5.** If the record leans on upstream code and docs, it
+  describes the software rather than the customer. And a method that depends on the platform being
+  well known degrades exactly where customers are most typical — an internal service has no public
+  source to read at all.
+- **Prefer the running container over the registry or the forge.** `kubectl exec -- cat` on the file
+  the controller actually mounted is stronger evidence than the same file on a branch, because it is
+  what they deployed. Match upstream reads to the running build first
+  (`kubectl logs | grep -iE 'version|git_commit|build'`), and say in the record when a claim rests on
+  upstream code rather than on their system.
 
 ### First: what is this written in, and is the logic even in a repo?
 
@@ -126,7 +144,7 @@ ls Dockerfile* */Dockerfile* go.mod package.json pom.xml build.gradle* pyproject
 | Shape | Where the answers live |
 |---|---|
 | Application code (any language) | the repo — the searches below, with the column for that language |
-| **Declarative platform** (agent defined as a CRD, config, or DSL; a shared engine executes it) | the **CRs and the platform's own docs**, not application source. `kubectl get <kind> -o yaml` is the read |
+| **Declarative platform** (agent defined as a CRD, config, or DSL; a shared engine executes it) | the **resource specs and the schema the cluster serves**, not application source. `kubectl get <kind> -o yaml` and `kubectl get crd <name> -o json` are the reads. Where behaviour is not visible in either, read the platform's source **pinned to the release they run** — not its documentation |
 | **Managed/third-party agent runtime** | its configuration; the agent logic may not be yours at all |
 
 For the declarative case the whole "read the source" premise weakens: there may be no handler, no
@@ -317,10 +335,27 @@ kubectl get deploy,sa,svc,cm -l <selector>   # what actually exists
 kubectl get <kind> <name> -o jsonpath='{.status}'   # the controller's own verdict — read it
 ```
 
-## Run the agent and read the answer — the highest-yield step, and it was missing
+## Run the agent and read the answer — high yield, and usually not available
 
-Nothing above asks you to *use* the service. On one assessment this single step produced three of
-the top five findings, and none of them were reachable any other way:
+Nothing above asks you to *use* the service, and on the assessments where it was possible this
+single step produced most of the sharpest findings.
+
+**But it is an action on a running system, not a read.** It runs their tools for real, spends their
+model budget, writes conversation state, and on a multi-agent service really delegates. So it is
+**consent-gated and conditional**: ask, name what it will touch, prefer a non-production tenant, and
+if the answer is no then it does not happen. Expect no more often than yes — a first engagement
+usually has a repo and read-only cluster access and nothing else.
+
+Record `invocation: not_permitted` when that is the case, distinct from `absent` or `unknown`, and
+say which findings were therefore out of reach. The substitutes at the end of this section cover
+most of it read-only.
+
+An earlier version of this file called invoking "the highest-yield step" and the command made it
+mandatory before the inventory walk. That was over-fitted to fixtures in a dev account with no
+users, no real tool side effects and nobody to ask — where invoking is free. It is not free on a
+customer's system, and the same instrument warns elsewhere that a mirrored turn really executes.
+
+Where it *is* available, these are what it finds and nothing else does:
 
 - **A capability claimed in its own description that has never worked.** The agent advertised
   remembering user preferences; long-term memory had a 100% write-failure rate. Config, CRD

@@ -1,7 +1,7 @@
 ---
 description: Assess an EKS-hosted agent for migration to AgentCore Runtime; emits an editable decision record
 argument-hint: "[repo-path] [--region <region>] [--depth quick|full]"
-allowed-tools: Bash, Read, Glob, Grep, Write, Edit, WebFetch
+allowed-tools: Bash, Read, Glob, Grep, Write, Edit
 ---
 
 # Assess an agentic service for AgentCore Runtime migration
@@ -40,6 +40,26 @@ do not guess or scan the filesystem.
 State the AWS account and region you are inspecting before any API call. **Read-only
 throughout.** If the identity might be production, say so and confirm before proceeding.
 
+**Findings come from their code and their deployment — not from the internet.** Every claim in the
+record traces to their repo, their cluster's control plane, their telemetry, a live AWS API, or
+something they told you. Do not research the customer's stack on the web to fill gaps.
+
+Two reasons this matters more than it sounds:
+
+- **It manufactures confidence.** A blog post or a vendor page describes what software is *meant*
+  to do. The record is supposed to say what *this deployment actually does*, and those differ
+  constantly — a shipped field the runtime ignores, a control with zero call sites, a proxy that
+  has never served a request. Web reading cannot distinguish them; reading the cluster can.
+- **Most customers are not researchable.** An internal service has no documentation you can find.
+  A method that leans on public material silently works only for well-known open-source
+  platforms and degrades exactly where the customer is most typical.
+
+Where the deployed software is third-party open source, the legitimate move is **not** its
+marketing or docs: pin its *published source to the release they run* (see `assessment.md`) and
+cite `file:line`. AgentCore capability facts you need are already verified in
+`deploy-on-agentcore/references/` and carry `[docs]` tags — read those rather than re-researching
+them, and if one is missing or looks wrong, record it `[open]` and say so.
+
 ## Step 1 — Gate 0: hard blockers
 
 → Owner: **`references/constraints.md`** (what the gates are, cost to resolve, escape hatches)
@@ -70,46 +90,63 @@ run rate to judge it. Skipping the economics there withholds the numbers from pr
 where the answer is to stay. Record `result: not_a_liftable_unit`, keep going, and let the
 adoption path be the deliverable.
 
-## Step 1.5 — Use the service, before you read anything about it
+## Step 1.5 — Read what the running system already emitted
 
-**Cheapest decisive step in the whole assessment, and it must come before the inventory walk.**
-Two independent assessments produced most of their sharpest findings here — a capability the agent
-advertises that has never worked, a fabricated citation, cross-conversation history bleed, a tool
-returning a resource that does not exist — and none was reachable from configuration. An earlier
-version of this command documented the technique in the method reference and never routed anyone
-to it, so assessors did not do it.
-
-→ Method: **`references/assessment.md`**, "Run the agent and read the answer"
-
-**Read the logs before anything else — one command, and it has been the single most decisive
-read.** A swallowed exception is invisible in config, in the CRs, and in a successful-looking
-answer; it shows up here:
+**Do this always. It is read-only, needs nobody's permission, and it has been the single most
+decisive read available.** A swallowed exception is invisible in config, in the resource specs, and
+in a successful-looking answer — it shows up here:
 
 ```bash
 kubectl logs -n <ns> <pod> --tail=200 | grep -iE 'error|exception|failed|traceback|warn'
 ```
 
-Do this per pod. A bare `except` that logs and continues turns a total failure into a component
-that reports healthy and answers requests — the store whose only job is repopulating a cold cache,
-failing 100% of reads, is the shape to expect.
+Per pod, not per Service. A bare `except` that logs and continues turns a total failure into a
+component that reports healthy and serves requests: on one service the store whose only job was
+repopulating a cold cache was failing **100% of reads**, and the logs were the only place that
+appeared. Also read `status` conditions — platforms often record their own verdict there, including
+fields they accepted and then ignored.
 
-Minimum, if there is a running deployment you can reach:
+→ Method: **`references/assessment.md`**
+
+## Step 1.6 — Invoking the agent: ask first, and expect the answer to be no
+
+Sending a turn through a customer's agent is **not a read.** It runs their tools for real, spends
+their model budget, writes conversation state, and on a multi-agent service really delegates. Treat
+it as an action on a production system: **get explicit permission, name what it will touch, and
+prefer a non-production tenant or environment.** If you cannot get that, this step does not happen.
+
+Expect it to be unavailable more often than not. A first assessment typically has a repo and
+read-only cluster access and nothing else. **That is not a gap in your work** — record
+`invocation: not_permitted` (distinct from `absent` or `unknown`) and note which findings therefore
+could not be reached, so the record shows the *class* of evidence missing rather than implying the
+controls were fine.
+
+Where it *is* available — a pilot, a staging environment, a pre-production deployment, or a
+customer who offers — it is worth doing, because a handful of turns has repeatedly surfaced things
+no configuration read can reach: a capability the agent advertises that has never worked, a
+fabricated citation, cross-conversation history bleed, a tool returning a resource that does not
+exist.
 
 1. One turn. Read the **answer**, not the status code.
-2. A second turn with a **fresh** conversation id — reusing one returns history-influenced
-   answers that look like broken tool calls.
-3. Two turns on the **same** conversation id, concurrently. Does either answer reflect the
-   other's input?
-   **If `replicas > 1`, forward to each pod individually** — `kubectl port-forward pod/<name>`,
-   not `svc/<name>`. A Service port-forward resolves to a *single* pod and tunnels there, so this
-   test silently measures within-pod behaviour only. Observed: all probes landed on one replica
-   while the other served zero, and the cross-replica behaviour — a whole turn lost, history
-   going backwards — was invisible until each pod was addressed directly.
+2. A second turn with a **fresh** conversation id — reusing one returns history-influenced answers
+   that look like broken tool calls.
+3. Two turns on the **same** conversation id, concurrently. Does either answer reflect the other's
+   input? **If `replicas > 1`, port-forward to each pod** — `port-forward svc/<name>` resolves to a
+   single pod, so this silently measures within-pod behaviour only. Observed: every probe landed on
+   one replica while the other served zero, and the cross-replica defect was invisible until each
+   pod was addressed directly.
 4. One turn that forces a tool call, then **check that tool's output against ground truth.**
-5. Compare what you saw against what the service **claims** — its description, its agent card,
-   its README. A false capability claim is a finding customers act on immediately.
+5. Compare what you saw against what the service **claims** — its description, its agent card, its
+   README. A false capability claim is a finding customers act on immediately.
 
-If you cannot invoke it, say so explicitly; it changes what the rest of the record can establish.
+**When you cannot invoke, these substitute for most of it.** They are read-only:
+
+| Instead of | Read |
+|---|---|
+| watching a turn succeed or fail | the logs above, and error-rate metrics if any exist |
+| checking a tool's output against reality | the tool's own logs, and its RBAC — what it *could* return |
+| concurrency and session behaviour | the stored session/event rows, their ordering and timestamps |
+| a false capability claim | the claimed capability against the config that would implement it — a described feature with no wiring is the same finding |
 
 ## Step 2 — Gate 1: walk the inventory
 
@@ -150,6 +187,12 @@ service: <name>
 account: <id>
 region: <region>
 depth: quick | full
+
+# Was the running agent invoked, and if not why? not_permitted is NOT a gap in the work — it is a
+# statement about what evidence was reachable. Without this field an assessor either invokes without
+# asking, or silently records config-only findings as if behaviour had been checked.
+invocation: performed | not_permitted | no_deployment | declined_by_assessor
+invocation_note: <what you were allowed to touch, or who said no, or why you chose not to>
 
 # Who owns the code, because it decides whether `redesign_first` is even actionable and whether
 # `customer_agrees` means anything. On a third-party platform the remedies are chart config, an
