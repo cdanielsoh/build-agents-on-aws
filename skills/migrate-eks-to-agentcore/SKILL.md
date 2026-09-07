@@ -1,17 +1,27 @@
 ---
 name: migrate-eks-to-agentcore
 description: >
-  Assess and execute a migration of an existing agentic service from Amazon EKS
-  (or ECS, or any self-managed container platform) to Amazon Bedrock AgentCore
-  Runtime. Use this skill whenever the user is deciding whether to move an agent
-  off Kubernetes, wants a per-component migrate/keep/delete verdict, needs the
-  real cost comparison between self-hosted and AgentCore, or is planning the
-  phased execution of such a move. Produces an editable decision record, then a
-  phased plan and scaffolding from it.
+  Assess an existing agentic service running on Amazon EKS (or ECS, or any
+  self-managed container platform) against the AWS Well-Architected Agentic AI
+  Lens, then show which Amazon Bedrock AgentCore components would close each gap
+  — and which of those need no platform change at all. Migration is one possible
+  outcome, not the goal: keeping the current runtime and adopting Gateway,
+  Identity, Memory, Policy or Evaluations alongside it is a first-class result,
+  and so is deciding nothing yet. Use this skill whenever the user wants to know
+  where their agent stands, what a production-grade agent service requires, which
+  parts AgentCore actually replaces, the real cost comparison between
+  self-hosted and AgentCore, or is planning a phased move. Produces an editable
+  decision record, then a phased plan and scaffolding from it.
   Trigger on: migrate agent to AgentCore, EKS to AgentCore, move agent off
   Kubernetes, should we use AgentCore or EKS, AgentCore vs EKS, AgentCore vs
   self-managed, agent platform decision, agentic service on EKS, containerised
   agent migration, replatform agent, agent migration assessment.
+  Trigger equally on the no-migration framings, which are the common case: assess
+  my agent on EKS, is my agent production ready, agent architecture review, agent
+  security review, what is missing from my agent, Well-Architected review for an
+  agent, can I use AgentCore without migrating, adopt AgentCore incrementally,
+  AgentCore Gateway in front of my existing agent, keep my agent on Kubernetes,
+  we are not ready to migrate, what would AgentCore give us.
   Trigger on the constraints that decide it: 15-minute request timeout, ARM64
   requirement for AgentCore, active session workload quota, new-session creation
   rate, microVM per session, session affinity for agents, sticky sessions for
@@ -36,19 +46,48 @@ description: >
   AGENTSEC, AGENTREL, AGENTPERF, AGENTCOST, AGENTSUS).
 ---
 
-# Migrating an Agentic Service from EKS to AgentCore Runtime
+# Assessing an Agentic Service on EKS against AgentCore
 
 ## What this skill is for
 
-A customer runs an agent on EKS. It works. They are asking whether to move it to
-AgentCore Runtime. The honest answer is *per component and conditional*, and the
+A customer runs an agent on EKS. It works. They want to know where it stands, and what
+AgentCore would do for them. The honest answer is *per component and conditional*, and the
 conditions are measurable.
 
 This skill exists because the available material on this question is feature tables
 that assert savings percentages nobody sourced. A customer who catches one
 unsupported number discounts everything else you say — including the parts that are
-true and would have helped them. **Trust is the deliverable; the migration is
+true and would have helped them. **Trust is the deliverable; any adoption is
 downstream of it.**
+
+### Migration is an outcome, not the objective
+
+**The assessment is the product.** A customer who learns that their tool server has no
+server-side authorization, that their approval gate has zero call sites, or that their
+conversation history has no retention policy has received something valuable whether or not they
+ever move a workload. Deliver that first and separately.
+
+Then, for each gap, the useful question is not *"should you migrate?"* but **"which AgentCore
+component closes this, and does it require moving your runtime?"** Because usually it does not:
+
+| Adoption shape | Runtime stays on EKS? | Typical fit |
+|---|---|---|
+| **Gateway** (+ **Policy**) in front of existing tools | **yes** | tool sprawl, no server-side tool authz, no per-identity scoping, missing approval gates |
+| **Identity** for outbound credentials / token vault | **yes** | hand-rolled OAuth, per-user tokens in a table |
+| **Memory** for long-term or retained state | **yes** | no retention policy, unbounded history, preference extraction |
+| **Evaluations** | **yes** | no golden set, no regression gate |
+| **Observability** | **yes** | no traces, no per-turn attribution |
+| **Runtime** | **no — this is the migration** | session isolation, inbound `CUSTOM_JWT`, scale-to-zero, ceilings met |
+
+Only the last row is a replatform. Say which row each recommendation sits in, and **lead with the
+ones that need no platform change**, because those are the ones a customer can act on this
+quarter. A component adopted alongside their existing service is a real outcome; so is
+"assessed, nothing adopted yet, revisit when X changes."
+
+**Never frame the result as abandoning what they built.** If they run a platform — theirs or a
+third party's — the recommendation is almost never "stop using it." It is "keep it, and put these
+two AgentCore components where the gaps are." An assessment that concludes with an ultimatum gets
+discounted entirely, along with the findings that were correct.
 
 ## The three rules
 
@@ -80,6 +119,7 @@ what cannot be derived — data residency, compliance, team depth, roadmap.
 | `[measured:customer]` | Observed on **their running workload**. The only kind you may quote as theirs |
 | `[measured:reference]` | Observed on this plugin's reference build — **n=1 agent**. Illustrates shape, never their number |
 | `[read:source]` | **Read in their repo at `file:line`.** Most of a pre-deployment assessment is this |
+| `[read:cluster]` | Read from the **live Kubernetes API** — a CR, a resource schema, RBAC, a controller's env. For a declarative platform this *is* the authoritative config store, and it **outranks `[read:source]`** wherever the two disagree |
 | `[stated:customer]` | Asserted by the customer — a README, a ticket, a conversation. Often the only source for volume and spend, and not independently checkable |
 | `[verified]` | Queried from a live AWS API (Service Quotas, Pricing, SDK) — **in their account, or say whose**. For a quota, also say **applied or default**: `2500 [verified: default, eu-west-1]`. Bare `[verified]` on a number that exists in both flavours leaves the reader unable to tell whose limit it is |
 | `[docs]` | **AWS** documentation. Not their README — that is `[stated:customer]`, and mislabelling it presents a mid-range guess from an 8-line file as a documented fact |
@@ -90,6 +130,12 @@ what cannot be derived — data residency, compliance, team depth, roadmap.
 choose between overclaiming (`measured`) and underclaiming (`reasoned`) for the evidence they
 actually had. A Dockerfile platform flag is neither an observation of a running system nor an
 inference — it is a fact read at a line number, and it is strong.
+
+`[read:cluster]` exists for the same reason and was added later: an assessor with no tag for the
+live API reached for `[measured:customer]`, which is defensible but conflates a config read with a
+performance observation. Three rows on that assessment would have been **recorded wrong from
+source** — concurrency safety, idempotency, and an isolation blocker that existed only at
+`HEAD` — because the deployed release and the repo were different software.
 
 **3. Never quote a cost figure you did not measure on their workload.** Not even the ones in
 this skill — they are one agent, one shape, n=1. Cost figures here exist to show *which levers

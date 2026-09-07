@@ -111,6 +111,12 @@ vocabulary changes.
 # Image architecture — amd64 means a rebuild. Language-independent.
 grep -rn 'platform' Dockerfile* ; grep -rniE 'arch|platform' *.yaml 2>/dev/null
 
+# If there is no Dockerfile — they deploy a prebuilt or third-party image — the grep above is
+# unanswerable. Ask the CLUSTER what it is already running instead. One line, and it is
+# [read:cluster] proof rather than a [read:source] inference:
+kubectl get pod -n <ns> <pod> -o jsonpath='{.spec.nodeName}{"\n"}' \
+  | xargs -I{} kubectl get node {} -o jsonpath='{.status.nodeInfo.architecture}{"\n"}'
+
 # Session state and its backing store (AGENTREL03) — search the words, not one language's idiom
 grep -rniE 'session.?store|session.?id|conversation.?id|thread.?id' .
 grep -rniE 'dynamodb|redis|elasticache|memorystore|postgres|mongo|cosmos' .
@@ -339,6 +345,25 @@ kubectl exec -n <ns> <pod> -- sh -c 'cat /sys/fs/cgroup/memory.peak; grep usage_
 — so it is not merely more accurate, it is the *right* metric. Subtract measured idle drift from
 the CPU delta (an idle replica drew ~3.6 millicores).
 
+**That command needs a shell in the container, and a distroless image has none.** Observed:
+`kubectl exec -- sh` → `sh: executable file not found in $PATH`. `kubectl debug` would work but
+**mutates the pod** (`ephemeralContainers`), which a read-only engagement forbids. Fall back to
+the kubelet summary API, which is read-only and needs nothing in the image:
+
+```bash
+kubectl get --raw "/api/v1/nodes/<node>/proxy/stats/summary" \
+  | python3 -c "import json,sys
+d=json.load(sys.stdin)
+for p in d['pods']:
+  if p['podRef']['name'].startswith('<prefix>'):
+    print(p['podRef']['name'], p.get('cpu',{}).get('usageCoreNanoSeconds'),
+          p.get('memory',{}).get('workingSetBytes'))"
+```
+
+Its CPU counter is an exact cumulative value, so CPU-per-turn stays trustworthy. **Its memory is
+sampled, so it is a maximum-observed, i.e. a floor on the true peak** — record it as such and do
+not call it a peak, because understating peak memory understates the AgentCore bill.
+
 Container Insights is listed in a lot of guidance as the first stop; on the customer cluster it
 **was not enabled**, so plan for the cgroup fallback rather than assuming it.
 
@@ -471,10 +496,24 @@ undermining it. Record both:
 - **low** — structure is ambiguous, or key artifacts are missing from the repo
 
 **`cost_confidence`** — how sure are you of the economics?
-- **high** — all four numbers measured on their workload, across a concurrency sweep
+- **high** — all four numbers measured on their workload, across a concurrency sweep, **and** a
+  real volume to multiply them by
 - **medium** — partial or extrapolated
 - **low / unavailable** — nothing measured. Then say **"the cost verdict is unavailable"**, not
   "probably cheaper", and quote none of this plugin's reference figures as theirs
+
+**Per-turn confidence and monthly confidence are different things, and the rubric above conflates
+them.** A deployment with complete measurements and *no users* — a reference install, a pilot, a
+pre-launch environment — earns high confidence per turn and has **no** monthly answer at all:
+there is no volume to multiply by, so both crossovers are `open`. `high` would imply a priceable
+answer and `low` would deny measurements you actually have. Record the two separately and say
+plainly which one is unavailable:
+
+```yaml
+cost_confidence:            # the monthly verdict
+  per_turn: high | medium | low | unavailable
+  monthly: high | medium | low | unavailable    # unavailable whenever volume is open
+```
 
 The two are frequently far apart, and saying so is more useful than averaging them into one
 misleading word.

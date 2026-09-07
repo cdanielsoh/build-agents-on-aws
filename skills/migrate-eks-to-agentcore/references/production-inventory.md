@@ -385,10 +385,24 @@ reverting to EKS is a routing change rather than a recovery.
 
 ## Reporting
 
-Three buckets, in this order:
+Five buckets, in this order. The order is the message: findings before products, and things
+they can adopt without a replatform before things that need one.
 
-1. **Gaps in the current system** — true whether or not they migrate. Lead here; it is the
-   proof the assessment was real work.
-2. **What migration deletes** — with line counts where you can, because they are concrete.
-3. **What migration makes available** — Cedar, Memory strategies, token vault, A2A. Scoped
-   work, never presented as delivered benefits.
+1. **Gaps in the current system** — true whether or not they adopt anything. Lead here; it is
+   the proof the assessment was real work, and it is the part with value independent of any
+   AWS purchase. Anything exploitable today goes at the top, as a vulnerability rather than as
+   a migration consideration.
+2. **What is already right** — name it. An assessment that finds only faults reads as a pretext,
+   and a customer who recognises their own good decisions in your list believes the rest of it.
+3. **Gaps closable with no platform change** — Gateway, Policy, Identity, Memory, Evaluations,
+   Observability alongside their existing runtime. This is usually the largest and most
+   actionable bucket, and it is the one that gets acted on this quarter.
+4. **What a runtime move would additionally change** — deletions with line counts where you
+   can, because they are concrete; and the ceilings or isolation properties that only Runtime
+   provides. Clearly marked as requiring a replatform.
+5. **What stays regardless** — the datastore, the prompt, the tools' business logic, their
+   cluster if other workloads use it.
+
+**Do not present bucket 4 as the destination.** "Assessed, adopting two components, revisiting
+the runtime next year" is a complete and successful outcome. So is "assessed, changing nothing
+yet" — with the condition that would change it named.
