@@ -60,6 +60,25 @@ cite `file:line`. AgentCore capability facts you need are already verified in
 `deploy-on-agentcore/references/` and carry `[docs]` tags — read those rather than re-researching
 them, and if one is missing or looks wrong, record it `[open]` and say so.
 
+## Step 0.5 — Survey access, then emit the plan. Before any other step.
+
+→ Owner: **`references/survey-and-plan.md`** — the six questions and the check graph they produce.
+
+Six questions, all about **access and permission**. Asking them is not the questionnaire failure this
+skill warns about: you cannot derive whether you are allowed to do something. Everything derivable
+stays derivable — do not ask about their architecture here.
+
+Then **write the `access` and `plan` blocks into the record before walking anything.** The graph
+decides which checks are reachable; a check whose precondition is unmet is recorded `unreachable`
+with its blocker and the substitute you used — never dropped, and never turned into a finding about
+the customer.
+
+**Why this is a step and not advice.** Every previous version put the conditionals in prose and the
+same thing happened each time: checks that did not apply were performed, checks that did apply were
+skipped, and "I was not permitted to look" was recorded as `absent`. A precondition in prose gets
+dropped by anyone running low on context. A precondition in a graph does not.
+
+
 ## Step 1 — Gate 0: hard blockers
 
 → Owner: **`references/constraints.md`** (what the gates are, cost to resolve, escape hatches)
@@ -188,11 +207,27 @@ account: <id>
 region: <region>
 depth: quick | full
 
-# Was the running agent invoked, and if not why? not_permitted is NOT a gap in the work — it is a
-# statement about what evidence was reachable. Without this field an assessor either invokes without
-# asking, or silently records config-only findings as if behaviour had been checked.
-invocation: performed | not_permitted | no_deployment | declined_by_assessor
-invocation_note: <what you were allowed to touch, or who said no, or why you chose not to>
+# Survey answers, verbatim, from Step 0.5. These gate the check graph — see survey-and-plan.md.
+# Recording them first is what stops an unasked question later reading as an answered one.
+access:
+  source_available: true | false | unknown
+  source_matches_deployment: true | false | unknown
+  control_plane_read: true | false
+  account_is_customers: true | false
+  deployment_exists: true | false
+  carries_real_traffic: true | false | unknown
+  invocation_permitted: true | false | unknown        # gates node F
+  invocation_environment: production | staging | pilot | none
+  load_generation_permitted: true | false | unknown   # gates node I
+  product_owner_reachable: true | false               # gates node J
+
+# One entry per node in the check graph. `unreachable` is a statement about what evidence was
+# available, NOT a finding about the customer — conflating the two manufactures gaps.
+plan:
+  - node: <A|A1|A2|B|C|D|E|F|F1|F2|G|H|I|J|K>
+    state: done | unreachable | not_applicable
+    blocked_by: <survey id or node id>    # required when unreachable
+    substitute: <what you did instead, or none available>
 
 # Who owns the code, because it decides whether `redesign_first` is even actionable and whether
 # `customer_agrees` means anything. On a third-party platform the remedies are chart config, an
