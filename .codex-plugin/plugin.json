@@ -1,0 +1,56 @@
+{
+  "name": "build-agents-on-aws",
+  "version": "2.2.0",
+  "description": "Design and deploy production-grade AI agents on AWS with Strands Agents SDK and Amazon Bedrock AgentCore.",
+  "author": {
+    "name": "cdanielsoh",
+    "url": "https://github.com/cdanielsoh"
+  },
+  "homepage": "https://github.com/cdanielsoh/build-agents-on-aws#readme",
+  "repository": "https://github.com/cdanielsoh/build-agents-on-aws",
+  "license": "MIT",
+  "keywords": [
+    "aws",
+    "agentcore",
+    "strands-agents",
+    "ai-agents",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "strands-agents": {
+      "command": "uvx",
+      "args": [
+        "strands-agents-mcp-server"
+      ],
+      "env": {}
+    },
+    "agentcore": {
+      "command": "uvx",
+      "args": [
+        "awslabs.amazon-bedrock-agentcore-mcp-server@latest"
+      ],
+      "env": {}
+    }
+  },
+  "interface": {
+    "displayName": "Build Agents on AWS",
+    "shortDescription": "Design and deploy AWS agents",
+    "longDescription": "Design production-grade agents with Strands Agents SDK and deploy them on Amazon Bedrock AgentCore.",
+    "developerName": "cdanielsoh",
+    "category": "Engineering",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/cdanielsoh/build-agents-on-aws",
+    "defaultPrompt": [
+      "Design a production-grade Strands agent",
+      "Plan an agent deployment on Bedrock AgentCore",
+      "Review my Strands agent architecture"
+    ],
+    "brandColor": "#FF9900",
+    "screenshots": []
+  }
+}
