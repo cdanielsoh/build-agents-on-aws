@@ -253,6 +253,14 @@ protocol is worth one look at whether the spec makes that key optional.
 So sweep for controls that exist and do nothing. Four checks; the *questions* are
 language-independent even though the syntax to answer them is not.
 
+**And check the inverse, because a live control can be worse than a dead one.** On one service
+every symbol had exactly one call site — a clean sweep — and the finding was a budget ceiling that
+*does* fire and leaves the conversation permanently unusable afterwards: the turn it interrupts
+stores a tool call with no result, and every later turn on that conversation returns a 500. So for
+each guard you find alive, ask **what state it leaves behind when it triggers**, and whether the
+next request can still succeed. A guard that half-completes is a durability defect wearing a safety
+control's name.
+
 **1. Symbols whose name claims a safety, tenancy or approval role — then count call sites.**
 Zero call sites beyond the definition is the finding.
 
@@ -436,11 +444,22 @@ Container Insights is listed in a lot of guidance as the first stop; on the cust
 If instrumentation is needed, the minimum is three counters: process CPU
 (`resource.getrusage`), summed request wall time, and an in-flight gauge.
 
-## Measure across a concurrency sweep, never at one level
+## Measure across a concurrency sweep — but not before the cheap reads
 
-Non-negotiable, and the single most important addition to this method. Every important finding
-on the customer's agent required at least three load levels; one level would have produced a
-plausible and wrong record.
+Run it at three or more levels **when you need per-turn numbers under load**, because one level
+can produce a plausible and wrong record. It is *not* the first thing to do, and an earlier version
+of this file called it "the single most important addition to this method", which was an
+overcorrection from one workload.
+
+Measured across three independent services: on one, a store fetch collapsed **670×** between c=6
+and c=12 and only the sweep could have found it. On the other two, throughput scaled **monotonically
+with flat latency** and the sweep's only unique output was a set of harmless warnings — while the
+decisive findings on both came from a handful of sequential requests and one `kubectl logs | grep`.
+
+So: read the logs, invoke the agent, and check one tool result against reality **first**. Sweep
+when you need the numbers, and record a clean sweep as a real result — "no degradation to c=N" is
+worth stating, and it is evidence against the cliff this section describes rather than a failure to
+find one.
 
 Measured on their agent, session-store fetch p50:
 
@@ -478,7 +497,22 @@ and does it exceed peak concurrency.*
 | Go | rarely a pool; `GOMAXPROCS`, plus client connection pools and any semaphore | `GOMAXPROCS` from host cores unless set |
 | Node / TypeScript | libuv thread pool; HTTP agent max sockets | `UV_THREADPOOL_SIZE` **4** |
 | JVM | the servlet/reactive worker pool, and the DB connection pool | framework-specific, usually explicit |
-| Any | **DB / HTTP client connection pool**, which binds before the thread pool on I/O-heavy agents | library default, typically 10 |
+| Any | **DB / HTTP client connection pool** — check whether it *blocks* or merely *discards* | library default, often 10 |
+
+**Record what kind of limit each one is, not just its integer.** An earlier version of this table
+said the connection pool "binds before the thread pool on I/O-heavy agents"; that was **falsified**
+at c=45 on a real agent, where the AWS SDK's pool size is a *reuse* cap that logs
+`Connection pool is full, discarding connection` and proceeds — 42 warnings, **no latency
+inflation at all**. Treating it as a ceiling manufactures one.
+
+| Kind | Behaviour at saturation | Record it as |
+|---|---|---|
+| **hard** | requests queue and wait | the binding limit — this is the number that matters |
+| **soft** | excess is discarded or a new resource is created; a warning appears | a warning source, **not** a ceiling |
+| **none** | no client-side pool; the server's limit applies | name the server's limit instead |
+
+So `concurrency_limit` needs the *kind* alongside the value. One integer with no kind is how a
+warning becomes a fabricated bottleneck in a record.
 
 **The universal trap: pool sizes derived from host CPU count, not from the cgroup limit.** A
 1-CPU-limited pod on a 64-core node derives 36, not 5. Read both numbers, always:

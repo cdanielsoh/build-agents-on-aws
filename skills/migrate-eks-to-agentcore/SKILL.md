@@ -369,7 +369,10 @@ the migration case.
 - Sessions longer than 14 days, or longer than 8 hours if microVMs are required
 - Sustained high volume where reserved or Spot capacity beats per-session billing
 - Deep Kubernetes expertise already paid for, and a working service
-- A regulatory posture requiring everything, including the tool gateway, to be
-  unreachable from the internet — not satisfiable for AgentCore Gateway `[docs]`
+- A regulatory posture that forbids the tool gateway from having a **public endpoint at all**,
+  as distinct from forbidding public *reachability*. Private reachability is achievable; private
+  *placement* is not. **Do not say "not satisfiable"** — that phrasing manufactured a blocker for
+  exactly the regulated customer who needs the real answer. The distinction is in
+  [constraints.md](references/constraints.md)
 
 "It works today" is a real argument. The burden of proof is on the migration.
