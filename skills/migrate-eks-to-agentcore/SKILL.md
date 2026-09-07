@@ -52,9 +52,24 @@ downstream of it.**
 
 ## The three rules
 
+**0. The service in front of you is not the one this skill was written against.** Every concrete
+example here is `n=1`. Expect any language (Go, TypeScript, Java, Python), any framework or none,
+agents defined as **declarative resources on a platform** rather than as code, work shaped as
+jobs or documents rather than chat turns, and multi-agent topologies. So:
+
+- Treat every example as an illustration of a *class* of finding, never as the expected answer.
+- When a search here returns nothing, decide whether the component is **absent** or the **question
+  was wrong for this stack** — those are different record entries, and conflating them
+  manufactures gaps that do not exist.
+- Where a practice is satisfied **by the platform** rather than by the customer's code, say so
+  rather than crediting or faulting them for it.
+- If this skill's vocabulary does not fit what you found, describe what you found. A forced fit
+  reads as inexperience to a customer whose stack differs, and it loses the account faster than
+  an admitted gap.
+
 **1. Read and measure before asking.** Almost everything decisive is derivable from
 the customer's repo and traffic: which session topology they run, their CPU-to-wall
-ratio, their peak memory, image architecture, whether they block the event loop. A
+ratio, their peak memory, image architecture, what bounds their concurrency. A
 questionnaire that asks what you could have read produces a sales script. Ask only
 what cannot be derived — data residency, compliance, team depth, roadmap.
 

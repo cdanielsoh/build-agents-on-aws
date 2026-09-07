@@ -99,10 +99,16 @@ topology:
   evidence: <file:line>
   # The taxonomy assumes conversational traffic. Set this FIRST — it gates the rest.
   work_unit: turn | job | document
-  # not_applicable when there is no `async def` at all; `false` would read as a clean pass.
-  event_loop_blocking: true | false | not_applicable | unknown
-  concurrency_bound_by: asyncio_executor | anyio_limiter | explicit | none | unknown
-  executor_sized: true | false | unknown
+  # Language-independent. `not_applicable` where the runtime has no such mechanism at all —
+  # `false` would read as a clean pass for a check that never ran.
+  request_isolation_risk: true | false | not_applicable | unknown   # can one slow call stall others?
+  # WHAT bounds parallelism, and the integer. Name the mechanism in whatever the stack calls it
+  # (thread pool, worker pool, capacity limiter, GOMAXPROCS, connection pool, semaphore).
+  concurrency_bound_by: <mechanism name> | none | unknown
+  concurrency_limit: { value: <n>, derived_from: cgroup | host_cpus | explicit | library_default | unknown }
+  # true only if concurrency_limit >= measured peak concurrency. The common defect is a limit
+  # derived from HOST cpu count inside a smaller container.
+  limit_exceeds_peak: true | false | unknown
   # Leave EMPTY unless you actually ran a sweep. Do not copy this example.
   measured_at_concurrency: []
   flush_cadence: every_turn | every_n_turns | interval | on_evict | none

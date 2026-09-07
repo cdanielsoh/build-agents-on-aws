@@ -54,18 +54,18 @@ the customer service being modelled got it right.
 ### If there is a running deployment, it outranks the repo
 
 This whole section assumes the repo describes what is running. When both are available and they
-disagree, **the cluster is the fact and the repo is a claim.** Measured on a deployed CNCF agent
-platform: the repo at HEAD served API version `v1alpha3` with one set of resource kinds, while the
-released chart actually deployed served `v1alpha2` with *differently named* kinds. A manifest
-written from the source tree failed outright:
+disagree, **the cluster is the fact and the repo is a claim.**
 
-```
-error: no matches for kind "ModelConfig" in version "kagent.dev/v1alpha3"
-```
+`[measured:reference]` on a deployed third-party agent platform: the source tree at `HEAD` served
+one API version with one set of resource kinds, while the released chart actually deployed served
+an *earlier* version with **differently named** kinds. A manifest written from the source tree was
+rejected by the API server outright (`no matches for kind`). Nothing in the repo signalled it.
 
-Nothing in the repo signalled this. It is the same class as the "a module was imported and did
-not exist, so the image was built from a different tree" finding below, but it fails the other
-way round — the repo is *newer* than production, not older, and looks internally consistent.
+Same class as the "a module was imported and did not exist, so the image was built from a
+different tree" finding below, but failing the other way round — the repo is *newer* than
+production, not older, and looks internally consistent, so there is no broken reference to trip
+over. Expect it wherever the customer deploys a pinned release of something they also track at
+head: their own chart, a vendored dependency, a platform they did not write.
 
 So when a deployment exists, take these from the cluster and not from source:
 
@@ -79,65 +79,122 @@ Record the divergence itself — a repo ahead of production means the assessment
 evidence describes code the customer is not running, which silently invalidates every
 `[read:source]` tag in the record.
 
-### Core shape
+### First: what is this written in, and is the logic even in a repo?
+
+**Establish the language and the shape before running any search.** Every pattern below is
+written for a source tree; two common inputs are not one:
 
 ```bash
-# Image architecture — amd64 means a rebuild
-grep -rn 'platform' Dockerfile*
-
-# Session topology (AGENTREL03)
-grep -rniE 'session.?store|session.?id|dynamodb|redis|elasticache' --include='*.py'
-grep -rniE 'lru|cache\[|_sessions\[|agent_cache' --include='*.py'
-
-# Affinity — tells you topology B
-grep -rn 'stickiness\|sessionAffinity\|StatefulSet\|headless' --include='*.yaml'
-
-# Event-loop blocking: blocking calls inside async def, not via to_thread
-# NB: do NOT pipe into a second `grep -n` — it numbers the pipe stream, not the file, and the
-# decision record requires real file:line evidence. Use -A context and read the filenames:
-grep -rn -A15 'async def' --include='*.py' . | grep -E '\.get_item|\.put_item|requests\.|\.invoke_model'
-grep -rn 'asyncio.to_thread\|run_in_executor' --include='*.py'
+# What are we actually reading? Do not assume.
+git ls-files | sed 's/.*\.//' | sort | uniq -c | sort -rn | head
+ls Dockerfile* */Dockerfile* go.mod package.json pom.xml build.gradle* pyproject.toml 2>/dev/null
 ```
+
+| Shape | Where the answers live |
+|---|---|
+| Application code (any language) | the repo — the searches below, with the column for that language |
+| **Declarative platform** (agent defined as a CRD, config, or DSL; a shared engine executes it) | the **CRs and the platform's own docs**, not application source. `kubectl get <kind> -o yaml` is the read |
+| **Managed/third-party agent runtime** | its configuration; the agent logic may not be yours at all |
+
+For the declarative case the whole "read the source" premise weakens: there may be no handler, no
+session code and no tool definitions to find, because the platform supplies them. **An empty
+search result then means "wrong question", not "gap"** — recording `absent` there is the error.
+Read the resource spec and the platform's guarantees instead, and say in the record that the
+component is supplied by the platform rather than by the customer.
+
+### Core shape
+
+Translate the intent, not the regex. The intent is the same in every language; only the
+vocabulary changes.
+
+```bash
+# Image architecture — amd64 means a rebuild. Language-independent.
+grep -rn 'platform' Dockerfile* ; grep -rniE 'arch|platform' *.yaml 2>/dev/null
+
+# Session state and its backing store (AGENTREL03) — search the words, not one language's idiom
+grep -rniE 'session.?store|session.?id|conversation.?id|thread.?id' .
+grep -rniE 'dynamodb|redis|elasticache|memorystore|postgres|mongo|cosmos' .
+# In-process caches, which is the topology-B tell
+grep -rniE 'lru|ttlcache|_sessions|sessionCache|agent_?cache|sync\.Map|ConcurrentHashMap' .
+
+# Affinity (topology B) — Kubernetes-level, so language-independent
+grep -rniE 'stickiness|sessionAffinity|StatefulSet|headless|consistent.?hash' --include='*.yaml' .
+```
+
+**Concurrency hygiene, by language.** The universal question is: *can one slow call stall
+unrelated in-flight work, and what bounds parallelism?* The mechanism differs:
+
+| Language | What to look for | Failure mode |
+|---|---|---|
+| Python | blocking calls inside `async def` not wrapped in `to_thread`/`run_in_executor`; then the pool that bounds it | a blocked event loop, or a small default thread pool |
+| Go | shared maps without a mutex; unbounded goroutines; a missing `context` deadline | data races, unbounded fan-out |
+| Node/TypeScript | sync I/O (`*Sync`), CPU-bound work on the main loop, no worker threads | one request stalls all |
+| Java/JVM | a fixed thread pool sized smaller than concurrency; blocking inside a reactive chain | queueing invisible at low load |
+
+```bash
+# Python
+grep -rn -A15 'async def' --include='*.py' . | grep -E '\.get_item|\.put_item|requests\.|urlopen'
+grep -rn 'asyncio.to_thread\|run_in_executor' --include='*.py' .
+# Go — shared state and deadlines
+grep -rnE 'map\[string\]|sync\.(Mutex|RWMutex|Map)|go func\(' --include='*.go' .
+grep -rn 'context.WithTimeout\|context.Background()' --include='*.go' .
+# Node / TypeScript
+grep -rnE 'readFileSync|execSync|await .*forEach|new Worker' --include='*.ts' --include='*.js' .
+```
+
+**NB on evidence:** do **not** pipe a `grep -rn` into a second `grep -n` — the second numbers
+the pipe stream, not the file, and the record requires real `file:line`. Use `-A` context and
+read the filenames.
+
+Whatever the language, record **what bounds concurrency** and how you established it. A clean
+concurrency model is necessary and not sufficient — see the sweep section below, where the limit
+turned out to be a pool size nobody had set.
 
 ### The domains most often missed
 
 These are the ones an assessment skips by default, and where the empty results are the
-finding. One grep per inventory domain.
+finding. One search per inventory domain, **unrestricted by file type** — the domain words are
+the same in every language, and narrowing to one extension is how a whole domain gets missed on
+a service that is not written in it.
 
 ```bash
 # Outbound auth (AGENTSEC03) — hand-rolled OAuth is often the largest deletable component
-grep -rniE 'client_credentials|refresh_token|code_verifier|pkce|authorization_code' --include='*.py'
-grep -rniE 'user_tokens|oauth_tokens|token_store|token_vault' --include='*.py'
+grep -rniE 'client_credentials|refresh_token|code_verifier|pkce|authorization_code' .
+grep -rniE 'user_tokens|oauth_tokens|token_store|token_vault|credential.?provider' .
 
-# Inbound auth (AGENTSEC03) — and whether it is SigV4, which makes migration breaking
-grep -rniE 'authorizer|oidc|jwt|verify_token|cognito' --include='*.py' --include='*.yaml'
-grep -rn 'sigv4\|SigV4\|sign_request\|SigV4Auth' --include='*.py'
+# Inbound auth (AGENTSEC03) — and whether it is SigV4, which is the one breaking case
+grep -rniE 'authorizer|oidc|jwt|verify_token|introspect|cognito|entra|okta|auth0' .
+grep -rniE 'sigv4|sign_request|signature.?v4|aws.?sign' .
 
 # Multi-tenancy (AGENTPERF07, AGENTSEC01)
-grep -rniE 'tenant|org_id|workspace_id' --include='*.py' --include='*.yaml'
+grep -rniE 'tenant|org_id|organization_id|workspace_id|account_id|namespace' .
 
 # Long-term memory and RAG (AGENTPERF03) — distinct from session state
-grep -rniE 'embedding|vector|opensearch|pgvector|pinecone|knowledge.?base|rerank' --include='*.py'
+grep -rniE 'embedding|vector|opensearch|pgvector|pinecone|qdrant|weaviate|knowledge.?base|rerank' .
 
 # Guardrails, PII, HITL (AGENTSEC04, AGENTSEC07, AGENTSEC08)
-grep -rniE 'guardrail|redact|pii|moderat|approval|confirm|interrupt' --include='*.py'
+grep -rniE 'guardrail|redact|pii|moderat|approval|confirm|interrupt|human.?in.?the.?loop' .
 
 # Spend ceilings (AGENTCOST01) and idempotency (AGENTREL06)
-grep -rniE 'max_tool_calls|token.?budget|BeforeToolCallEvent|cancel_tool' --include='*.py'
-grep -rniE 'idempot|dedup|request_id' --include='*.py'
+grep -rniE 'max_tool_calls|max_iterations|token.?budget|rate.?limit|cancel_tool|intervention' .
+grep -rniE 'idempot|dedup|request_id|correlation_id' .
 
-# Self-hosted MCP servers (AGENTOPS04)
-grep -rln 'streamable_http\|FastMCP\|/mcp' --include='*.py' --include='*.yaml'
-# Then: does each have a build definition HERE? On a real repo two MCP servers ran as separate
-# Deployments on pinned tags, and the only Dockerfile copied just the main service — so a patch
-# planned against them had no tree to apply to. Diff manifest images against what you can build:
+# MCP servers the customer runs themselves (AGENTOPS04)
+grep -rlniE 'streamable.?http|fastmcp|mcp.?server|/mcp' .
+# Then: does each have a build definition HERE? Observed on a real repo — MCP servers ran as
+# separate Deployments on pinned tags, and the only Dockerfile copied just the main service, so
+# a planned patch had no tree to apply to. Diff manifest images against what you can build:
 grep -rhoE 'image: *[^ ]+' --include='*.yaml' . | sort -u; ls Dockerfile* */Dockerfile* 2>/dev/null
 
-# Evals (AGENTOPS06) — absence limits what Phase 2 can claim
-ls -d test* eval* 2>/dev/null || true; grep -rln 'strands_evals\|golden\|expected_response' --include='*.py' .
+# Evals (AGENTOPS06) — absence limits what a parallel run can claim
+ls -d test* eval* 2>/dev/null || true
+grep -rlniE 'golden|expected_response|expected_output|regression.?set|eval' .
 
-# Prompt lifecycle (AGENTOPS02) — versioned files, or inline strings edited in place?
-grep -rln 'system_prompt\|SYSTEM_PROMPT' --include='*.py'; ls -d prompts/ 2>/dev/null
+# Prompt lifecycle (AGENTOPS02) — versioned artifacts, or inline strings edited in place?
+grep -rlniE 'system.?prompt|system.?message|instruction' . ; ls -d prompt* 2>/dev/null
+
+# Agent-to-agent (AGENTOPS04, AGENTREL01) — a second topology axis, easy to miss entirely
+grep -rlniE 'a2a|agent.?card|supervisor|delegat|handoff|sub.?agent|swarm|graph' .
 ```
 
 ### The dead-control sweep — negative signal, and it outperforms the greps
@@ -163,29 +220,45 @@ That last one generalises: **the sweep finds controls that do nothing, but also 
 that do something for assumed-present fields.** Any `d["key"]` on a response from an external
 protocol is worth one look at whether the spec makes that key optional.
 
-So sweep for controls that exist and do nothing:
+So sweep for controls that exist and do nothing. Four checks; the *questions* are
+language-independent even though the syntax to answer them is not.
+
+**1. Symbols whose name claims a safety, tenancy or approval role — then count call sites.**
+Zero call sites beyond the definition is the finding.
 
 ```bash
-# Symbols whose name claims a safety/tenancy/approval role — then check call sites
-grep -rnE 'def [a-z_]*(approve|approval|redact|guard|sanitiz|validat|authori[sz]|scope|tenant|budget|limit)[a-z_]*' --include='*.py' .
-# For each hit, count call sites. Zero (beyond the definition) is a finding:
-grep -rn '<symbol>' --include='*.py' . | grep -v 'def <symbol>'
-
-# Declared tool parameters never used in the body
-grep -rn -A25 '@tool' --include='*.py' .   # then read each: is every parameter referenced?
-
-# Constants that name things, and whether those things exist
-grep -rnE '^[A-Z_]+ *= *[{\[]' --include='*.py' .
-
-# Modules imported but absent — an unbuildable tree blocks half an assessment
-python3 -m compileall -q . 2>&1 | head
-grep -rhoE '^from \.[a-z_.]+ import|^from [a-z_.]+ import' --include='*.py' . | sort -u
+# Match the naming, not one language's keyword. Covers def/func/function/public *.
+grep -rnE '(def|func|function|fn|sub|public|private|protected)[ ,a-zA-Z<>\[\]*]*\b[a-zA-Z_]*(approv|redact|guard|sanitiz|validat|authori[sz]|scope|tenant|budget|limit|check)[a-zA-Z_]*\b' .
+grep -rn '<symbol>' . | grep -vE '(def|func|function) +<symbol>'   # per hit
 ```
 
-The last one matters more than it looks: on three of five assessed services a module was
-imported and did not exist, which meant the image was built from a different tree than the one
-under version control. That single fact blocked inbound-auth classification, flush cadence and
-event-loop hygiene at once — one cause, many `unknown`s.
+**2. Declared tool parameters never referenced in the body.** Read each tool definition and check
+every declared parameter is used. Find them by however this stack declares a tool — a decorator,
+a struct tag, a registration call, a JSON schema, a CR field:
+
+```bash
+grep -rlniE '@tool|tool\(|registerTool|addTool|tools:|inputSchema|parameters' .
+```
+
+**3. Constants and config keys that name things, and whether those things exist.** Cross-check
+every named tool, model, role or flag against something that actually defines it.
+
+**4. Does the tree even build, and is anything referenced but absent?** Use the stack's own
+checker — `python -m compileall`, `go build ./...`, `tsc --noEmit`, `mvn -q compile`. On three of
+five assessed services something was imported and did not exist, which meant **the image was
+built from a different tree than the one under version control**. That single fact blocked
+inbound-auth classification, flush cadence and concurrency hygiene at once — one cause, many
+`unknown`s, and it is worth finding in the first ten minutes.
+
+For a **declarative platform** the equivalent of all four is to diff intent against effect: what
+the resource *declares* versus what the controller actually created, and whether the tools or
+guards it names resolve to anything.
+
+```bash
+kubectl get <kind> <name> -o yaml            # declared
+kubectl get deploy,sa,svc,cm -l <selector>   # what actually exists
+kubectl get <kind> <name> -o jsonpath='{.status}'   # the controller's own verdict — read it
+```
 
 ## Reading the cluster — Auto Mode's defaults are not what a chart expects
 
@@ -289,53 +362,63 @@ Measured on their agent, session-store fetch p50:
 A ~670× degradation, invisible at c=1 and c=6. Any per-turn number taken at low concurrency is
 not the production number.
 
-### The cause, and why no code read or Kubernetes metric finds it
+### The cause, and why neither a code read nor a Kubernetes metric finds it
 
-Their event loop is clean — every blocking call correctly wrapped in `asyncio.to_thread`, which
-both a code review and this method's greps credited them for. But **`asyncio.to_thread` uses the
-default executor**, and inside a 2-CPU container `ThreadPoolExecutor()._max_workers` is
-`min(32, cpu_count + 4)` = **6**. Twelve concurrent turns queue behind six threads.
+**The general rule: concurrency is bounded by a pool nobody chose, sized from a number that is
+wrong inside a container.** Every runtime has at least one such pool. It is invisible in code
+review because the code is *correct*, and invisible in cluster metrics because the pod is not
+short of CPU — it is short of pool slots, and waiting is not utilization.
 
-`event_loop_blocking: true|false` is therefore the wrong question — a clean loop is necessary
-and not sufficient.
+The specific instance measured here `[measured:customer]`: the service correctly offloaded every
+blocking call to a thread pool, which both a code review and the searches above credited it for.
+But the pool it offloaded to was the *default* one, sized `min(32, cpu_count + 4)` — and inside a
+2-CPU container that is **6**. Twelve concurrent turns queued behind six threads.
 
-### First: which pool is even in play?
+So **"is the concurrency model clean" is the wrong question.** Clean is necessary and not
+sufficient. The question is *what integer bounds parallelism, where did that integer come from,
+and does it exceed peak concurrency.*
 
-The earlier version of this section prescribed one probe and it was **wrong for most services**.
-Branch on the handler style:
+### Find the binding limit for this runtime
 
-| Handler | Concurrency is bounded by | Default |
+| Runtime | The pool that usually binds | Default, and where it comes from |
 |---|---|---|
-| `async def` + `asyncio.to_thread` | asyncio's default `ThreadPoolExecutor` | `min(32, cpu_count + 4)` |
-| **plain `def`** (FastAPI/Starlette) | **anyio's capacity limiter** | **40** |
-| no web framework (batch, gRPC worker) | whatever the code sets explicitly | read it |
+| Python, async handlers offloading work | the default thread-pool executor | `min(32, cpu_count + 4)` |
+| Python, **sync** handlers under an ASGI server | the framework's capacity limiter | often **40** — a different number from the above, so identify the handler style first |
+| Go | rarely a pool; `GOMAXPROCS`, plus client connection pools and any semaphore | `GOMAXPROCS` from host cores unless set |
+| Node / TypeScript | libuv thread pool; HTTP agent max sockets | `UV_THREADPOOL_SIZE` **4** |
+| JVM | the servlet/reactive worker pool, and the DB connection pool | framework-specific, usually explicit |
+| Any | **DB / HTTP client connection pool**, which binds before the thread pool on I/O-heavy agents | library default, typically 10 |
 
-A service with **no `async def` at all** has no event loop to block — record
-`event_loop_blocking: not_applicable`, not `false`, because `false` reads as a clean bill of
-health for a check that never applied.
+**The universal trap: pool sizes derived from host CPU count, not from the cgroup limit.** A
+1-CPU-limited pod on a 64-core node derives 36, not 5. Read both numbers, always:
 
 ```bash
-# Which pools exist, and what actually bounds them
+# Language-independent: what the container is actually limited to
+kubectl exec -n <ns> <pod> -- sh -c 'cat /sys/fs/cgroup/cpu.max; nproc'
+```
+
+Then ask the runtime what it thinks. Python example — translate for the stack in front of you
+(`runtime.NumCPU()`/`GOMAXPROCS(0)` in Go, `UV_THREADPOOL_SIZE` and `os.cpus()` in Node,
+`availableProcessors()` on the JVM):
+
+```bash
 kubectl exec -n <ns> <pod> -- python -c "
 import os, concurrent.futures as f
-print('cpu_count()      ', os.cpu_count(), '  <- HOST cpus, not your cgroup limit')
-print('cgroup cpu.max   ', open('/sys/fs/cgroup/cpu.max').read().strip())
-print('asyncio executor ', f.ThreadPoolExecutor()._max_workers)
+print('runtime cpu count', os.cpu_count(), ' <- HOST cpus, not your cgroup limit')
+print('default pool     ', f.ThreadPoolExecutor()._max_workers)
 try:
     import anyio.to_thread as a
-    print('anyio limiter    ', a.current_default_thread_limiter().total_tokens)
+    print('sync-handler cap ', a.current_default_thread_limiter().total_tokens)
 except Exception as e:
-    print('anyio limiter     n/a', e)
+    print('sync-handler cap  n/a', e)
 "
 ```
 
-**`os.cpu_count()` reports the host's CPUs, not `limits.cpu`.** So the asyncio pool on a
-1-CPU-limited pod on a 64-core node is sized 36, not 5 — the derived number is meaningless
-without `cpu.max`. Read both.
-
-Record `executor_sized` alongside `event_loop_blocking`. On the one customer service where this
-was measured it was the largest defect in the codebase, it is a few lines to fix, and it improves
-the current service as much as the migrated one.
+Record **what bounds concurrency and the number**, not a boolean. Where no such mechanism applies
+— no event loop, no worker pool, a platform that runs each request elsewhere — record
+`not_applicable` rather than `false`, because `false` reads as a clean bill of health for a check
+that never ran. On the one service where this was measured it was the largest defect present, it
+was a few lines to fix, and it improves the current service as much as the migrated one.
 
 ### Two more findings that only a sweep produces
 
