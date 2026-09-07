@@ -1,36 +1,13 @@
 ---
 name: strands-agent-design
 description: >
-  Design well-architected AI agents using the Strands Agents SDK. Use this
-  skill whenever the user wants to design agent prompts, structure system
-  prompts for cache efficiency, design tool APIs with progressive disclosure,
-  choose between single-agent and multi-agent topologies (Graph, Swarm,
-  Workflow, Agent-as-Tool, A2A), manage context window pressure, implement
-  deferred tool loading, use agent.state for durable metadata, write agent
-  evaluations and tests, use the Strands Evals SDK, build closure factory
-  tool patterns, avoid tool anti-patterns, structure prompt stacks, load
-  file-based system prompts, inject dynamic context via tool results,
-  pre-populate user messages, simulate multi-turn conversations with
-  ActorSimulator, generate test cases with ExperimentGenerator, evaluate
-  tool selection accuracy, or decide when to split a single agent into
-  multiple agents. Trigger on mentions of: Strands agent design, prompt
-  architecture, tool design patterns, progressive disclosure, closure
-  factory, agent topology, GraphBuilder, Swarm, Workflow, Agent-as-Tool,
-  A2A protocol, strands-evals, strands_evals, OutputEvaluator,
-  TrajectoryEvaluator, ActorSimulator, ExperimentGenerator, EvalBuilder,
-  prompt cache, cache TTL, context window management, context pressure,
-  conversation manager, ContextOffloader, proactive compression,
-  interventions, InterventionHandler, ModelRouter, deferred tool loading,
-  tool anti-patterns, agent.state, meta-tooling, meta-tool pattern,
-  MetaToolingBuilder, ToolCategory, CategoryRegistry, schema-level
-  progressive disclosure, get_tool_info / use_tool pattern,
-  or "how should I structure my agent".
-  Also trigger when users ask about agent architecture decisions, when to
-  use multi-agent patterns, how to test agents, how to design agent tool
-  APIs, how to manage long conversations, how to handle context window
-  limits, how to reduce tool-schema token overhead, how to route between
-  local and MCP tools transparently, or how to protect agents from
-  prompt injection (entity index mapping, ID hiding).
+  Design and review AI agents built with the Strands Agents SDK. Use for prompt
+  architecture and caching, tool API design, context management, deferred or
+  meta-tool loading, security and interventions, Strands Evals, and topology
+  choices such as single agent, Agent-as-Tool, Graph, Swarm, Workflow, and A2A.
+  Trigger when the user asks how to structure, test, secure, or improve a
+  Strands agent. For Bedrock AgentCore deployment infrastructure, use
+  deploy-on-agentcore instead.
 ---
 
 # Designing AI Agents with Strands Agents SDK
@@ -46,9 +23,9 @@ This skill covers how to **design** well-architected agents — prompt architect
 
 It does **not** cover deployment infrastructure (CDK, AgentCore Runtime, MCP Gateway, auth). For that, see the `deploy-on-agentcore` skill.
 
-A runnable project template lives at the plugin root, not in this skill. Scaffold it with the
-`/new-agent` command rather than retyping files from these references — the command copies the
-tested template verbatim.
+A runnable project template lives at the plugin root, not in this skill. Scaffold it with
+`/new-agent` in Claude Code or `$new-agent` in Codex rather than retyping files from these
+references — the workflow copies the tested template verbatim.
 
 ## The Six Pillars
 
@@ -249,9 +226,9 @@ When tool count exceeds ~15 but the domain is cohesive, meta-tooling reduces sch
 
 ## Project Template
 
-Run `/new-agent <dir>` to materialize a runnable project. **Do not hand-write these files
-from the references** — the command copies the tested template, which is pinned and
-lint-checked; retyping introduces drift.
+Run `/new-agent <dir>` in Claude Code or `$new-agent <dir>` in Codex to materialize a
+runnable project. **Do not hand-write these files from the references** — the workflow copies
+the tested template, which is pinned and lint-checked; retyping introduces drift.
 
 ```
 agent/

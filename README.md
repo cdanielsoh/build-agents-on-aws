@@ -1,13 +1,26 @@
 # Build Agents on AWS
 
-Claude Code plugin for building production-grade AI agents on AWS. Covers the full lifecycle — from agent design to deployment on Bedrock AgentCore.
+Claude Code and Codex plugin for building production-grade AI agents on AWS.
+Covers the full lifecycle — from agent design to deployment on Bedrock AgentCore.
 
 ## Installation
+
+### Claude Code
 
 ```bash
 claude plugin marketplace add cdanielsoh/build-agents-on-aws
 claude plugin install build-agents-on-aws@build-agents-on-aws
 ```
+
+### Codex
+
+```bash
+codex plugin marketplace add cdanielsoh/build-agents-on-aws
+codex plugin add build-agents-on-aws@build-agents-on-aws
+```
+
+The repository contains host-specific manifests for both tools while sharing the same skills,
+MCP servers, templates, and workflow procedures.
 
 ## Skills
 
@@ -18,11 +31,11 @@ claude plugin install build-agents-on-aws@build-agents-on-aws
 
 Skills activate automatically when relevant context is detected — mention Strands SDK, agent design, AgentCore, MCP Gateway, CDK, or related topics.
 
-## Commands
+## Workflows
 
-| Command | What it does |
-|---------|--------------|
-| `/new-agent [dir]` | Scaffold a runnable Strands + AgentCore project from `templates/` |
+| Workflow | Claude Code | Codex | What it does |
+|----------|-------------|-------|--------------|
+| New agent | `/new-agent [dir]` | `$new-agent [dir]` | Scaffold a runnable Strands + AgentCore project from `templates/` |
 
 ## How the Skills Relate
 
@@ -73,9 +86,8 @@ Skills are documentation. Runnable code lives in `templates/` at the plugin root
 materialized by a command, so the files land on disk verbatim instead of being retyped
 from a skill document:
 
-```bash
-/new-agent ./my-agent
-```
+In Claude Code, run `/new-agent ./my-agent`. In Codex, run `$new-agent ./my-agent` or ask
+Codex to scaffold a new Strands + AgentCore project.
 
 ```
 templates/strands-agentcore/
