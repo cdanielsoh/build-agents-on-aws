@@ -13,6 +13,35 @@ what each one costs to resolve, and where to read the detail.
 Cheap, binary, and each can end the conversation before a week is spent. Read the source
 column for the mechanism; the point here is the verdict.
 
+### Gate 0.0 — is the agent a liftable unit at all?
+
+**Ask this first, because every other gate assumes the answer is yes.** Observed on a real
+assessment: all nine gates passed, the gate section read green, and the thing that actually
+prevented a runtime move was not among them — the agent process fetched its entire
+configuration from a controller at startup and persisted every event back to that controller's
+API. Moving the container alone would produce a process with no configuration and nowhere to
+write. The gates measured the wrong object.
+
+So establish what the deployable unit actually needs before you evaluate whether it fits:
+
+| Ask | A `no` means |
+|---|---|
+| Does the container start from **its own** config — env, files, its own secret — rather than fetching it from a control plane at boot? | the control plane comes too, or is replaced |
+| Does it write state to a store you could point elsewhere, rather than to a platform API? | the platform's data plane is part of the unit |
+| Is its tool wiring in its own image, rather than injected by a controller? | the tool layer has to be rebuilt |
+| Could you run this image outside the platform and have it serve one turn? | **the unit is the platform, not the agent** |
+
+```bash
+kubectl get deploy <agent> -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}'
+kubectl get deploy <agent> -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}'
+kubectl get deploy <agent> -o jsonpath='{.spec.template.spec.volumes}{"\n"}'   # mounted config?
+```
+
+If the honest answer is "the unit is the platform", say so plainly and early. It does not end the
+engagement — it reframes it, because the components that need no runtime move are then the whole
+of the recommendation, and that is a better conversation than a migration that was never
+available.
+
 **Thresholds are not reproduced here, and the reason is stronger than "they drift."**
 
 Quotas vary **by region**, not just by account. Verified: `Active Session Workloads per

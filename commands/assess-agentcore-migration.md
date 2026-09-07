@@ -19,6 +19,12 @@ the customer's choices binding rather than advisory.
 
 `--depth quick` walks only the starred practices and stops after Gate 2. Default is `full`.
 
+**Prefer `full`, and say what `quick` costs when you use it.** On one assessment the three
+sharpest findings — a fabricated citation, a platform feature failing 100% of writes, and a false
+capability claim in the service's own description — all sat on **unstarred** practices, so `quick`
+would have produced a clean-looking record that missed everything worth acting on. The stars mark
+what most often decides a *migration*, not what most often turns out to be broken.
+
 ## Step 0 — Locate the service and the account
 
 If `$ARGUMENTS` names a repo path, use it. If empty, ask which repository holds the agent —
@@ -183,8 +189,16 @@ inventory:
     # where a mechanism exists that the customer neither built nor switched on. Without them,
     # "upstream built this well and it ships off by default" is recorded as the customer's
     # failure — which misattributes the fix as well as the fault.
+    #
+    # platform_provides asserts a WORKING guarantee. Do not use it for something configured but
+    # unproven: observed a platform feature Accepted=True, Ready=True, indexed in the schema,
+    # with a 100% write-failure rate from a bug in the platform's own translation layer. That is
+    # present_but_ineffective + ineffective_because, and `defect_owner` says whose bug it is —
+    # otherwise the record aims the fix at the customer.
     state: present | present_but_ineffective | platform_provides | available_unconfigured
          | absent | absent_by_design | not_applicable | unknown
+    # Required when present_but_ineffective on a platform-supplied mechanism.
+    defect_owner: customer | platform | operator_config | unknown
     # Required when present_but_ineffective. `effective: false` alone was near-useless —
     # measured across five records, 13 of 14 such rows said `false`, restating the state.
     # never_invoked is the severe class: the control exists, reads as present in review, and
@@ -192,10 +206,20 @@ inventory:
     ineffective_because: never_invoked | partially_covers | misconfigured | unverifiable
     evidence: <file:line, or why unknown>
     verdict: migrate | migrate_plus | keep | delete | regress | stay | gap | correctly_absent
-    # Which AgentCore component would close this, and whether adopting it requires moving the
-    # runtime. This is the field the customer acts on. `none` when nothing applies — do not
-    # reach for a component to make a row look productive.
-    closed_by: gateway | policy | identity | memory | evaluations | observability
+    # What would close this, and whether it requires moving the runtime. The field the customer
+    # acts on. Do NOT reach for an AgentCore component to make a row look productive — and do
+    # not fall back to `none`, which reads as "nothing can fix this".
+    #
+    # Measured on a real assessment: an AgentCore-only enum forced 36 of 60 rows to `none`,
+    # when most were one already-shipped platform field away. Non-AgentCore answers first,
+    # because they are cheaper for the customer and they are what earns the rest a hearing:
+    #   platform_config       — a field/flag their platform already ships, switched off
+    #   customer_code         — their own code; no purchase, no platform change
+    #   cluster_config        — RBAC, NetworkPolicy, secrets, resource limits
+    #   upstream_contribution — third-party OSS with no such field yet; a PR or fork
+    #   none                  — genuinely nothing closes it; say why in `note`
+    closed_by: platform_config | customer_code | cluster_config | upstream_contribution
+             | gateway | policy | identity | memory | evaluations | observability
              | code_interpreter | browser | runtime | none
     # false for everything except runtime-coupled items (session isolation, inbound CUSTOM_JWT,
     # scale-to-zero, the duration ceilings). Report these FIRST — they are actionable now.
