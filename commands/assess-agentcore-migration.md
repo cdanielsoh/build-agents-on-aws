@@ -81,6 +81,18 @@ to it, so assessors did not do it.
 
 → Method: **`references/assessment.md`**, "Run the agent and read the answer"
 
+**Read the logs before anything else — one command, and it has been the single most decisive
+read.** A swallowed exception is invisible in config, in the CRs, and in a successful-looking
+answer; it shows up here:
+
+```bash
+kubectl logs -n <ns> <pod> --tail=200 | grep -iE 'error|exception|failed|traceback|warn'
+```
+
+Do this per pod. A bare `except` that logs and continues turns a total failure into a component
+that reports healthy and answers requests — the store whose only job is repopulating a cold cache,
+failing 100% of reads, is the shape to expect.
+
 Minimum, if there is a running deployment you can reach:
 
 1. One turn. Read the **answer**, not the status code.
@@ -88,6 +100,11 @@ Minimum, if there is a running deployment you can reach:
    answers that look like broken tool calls.
 3. Two turns on the **same** conversation id, concurrently. Does either answer reflect the
    other's input?
+   **If `replicas > 1`, forward to each pod individually** — `kubectl port-forward pod/<name>`,
+   not `svc/<name>`. A Service port-forward resolves to a *single* pod and tunnels there, so this
+   test silently measures within-pod behaviour only. Observed: all probes landed on one replica
+   while the other served zero, and the cross-replica behaviour — a whole turn lost, history
+   going backwards — was invisible until each pod was addressed directly.
 4. One turn that forces a tool call, then **check that tool's output against ground truth.**
 5. Compare what you saw against what the service **claims** — its description, its agent card,
    its README. A false capability claim is a finding customers act on immediately.
@@ -257,7 +274,12 @@ inventory:
     # measured across five records, 13 of 14 such rows said `false`, restating the state.
     # never_invoked is the severe class: the control exists, reads as present in review, and
     # has zero call sites. It is what makes a record `redesign_first` rather than migrate_plus.
-    ineffective_because: never_invoked | partially_covers | misconfigured | unverifiable
+    # fails_at_runtime: it IS invoked, it runs, and it throws every time. Not never_invoked
+    # (it runs), not partially_covers (it covers nothing), not misconfigured (no setting is
+    # wrong — it is a code defect), not unverifiable (you verified it). Two assessments hit
+    # exactly this and the enum could not hold it.
+    ineffective_because: never_invoked | fails_at_runtime | partially_covers | misconfigured
+                       | unverifiable
     evidence: <file:line, or why unknown>
     verdict: migrate | migrate_plus | keep | delete | regress | stay | gap | correctly_absent
     # What would close this, and whether it requires moving the runtime. The field the customer
