@@ -379,6 +379,13 @@ that produces a wrong blocker. And **applied quotas differ from defaults**, so c
 
 ## Measuring — prefer what already exists
 
+**Check the billing floor before you invest in precision.** AgentCore bills memory against a
+**128 MB minimum**. Measured on a real agent: peak was 13.3 MB — 9.6× *below* the floor — so the
+billed figure is 0.128 GB no matter how precisely you measure, and the whole high-water-mark
+apparatus below was wasted effort on that workload. One cheap read first: if peak is comfortably
+under 128 MB, record it, note that memory right-sizing is **not an available lever** post-move, and
+skip the rest of this section.
+
 Do not instrument if the data is already there.
 
 | Number | Where to look first |
