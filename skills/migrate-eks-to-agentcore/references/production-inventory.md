@@ -253,7 +253,7 @@ dominant cost lever. → `cost-and-billing.md`
 | # | Lens question | Detect | Verdict |
 |---|---|---|---|
 | **[AGENTSUS01](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsus01.html)** | How do you build sustainable and repeatable frameworks for managing compute, memory, and other shareable agent resources? | Resource reuse, right-sizing, pooling | **Migrate+**, with a caveat — serverless removes *node* idle, but an unstopped session bills memory through its idle tail (92% of the default bill). It relocates idle cost rather than removing it |
-| **[AGENTSUS02](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsus02.html)** | How do I establish sustainable frameworks for agent dependencies? | Dependency pinning, upgrade cadence, SDK drift | **Keep** — Strands minor versions move fast |
+| **[AGENTSUS02](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsus02.html)** | How do I establish sustainable frameworks for agent dependencies? | Dependency pinning, upgrade cadence, SDK drift | **Keep** — agent SDKs move fast in minor versions whatever the framework, and an unpinned build makes every later phase uncontrolled |
 | **[AGENTSUS03](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentsus03.html)** | How do I establish durable patterns for agent interactions with users and business processes? | Is the agent understood by more than its author? Documented? | **Keep** |
 
 AGENTSUS03 is easy to skip and worth asking: a working agent nobody but its author understands is

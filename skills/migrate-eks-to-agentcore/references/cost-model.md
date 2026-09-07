@@ -1,23 +1,28 @@
 # Cost: EKS vs AgentCore Runtime
 
-Everything here was measured on a deployed reference — a Strands agent with three
-DynamoDB-backed tools, running on EKS Auto Mode (Graviton `c6g.large`, 2 replicas,
-Pod Identity) under 12 concurrent conversations, Sonnet 4.6 — or verified against the
-live Pricing and Service Quotas APIs. Where a number is reasoned rather than observed,
-it says so.
+Numbers here are **`n=1` illustrations of shape, never a customer's figures.** They came from one
+deployed reference agent (three tool calls against a key-value store, two Graviton replicas, 12
+concurrent conversations) or from the live Pricing and Service Quotas APIs. A different agent, in
+a different language, with a different retrieval backend, will produce different absolute values —
+what transfers is *which lines dominate*, not the lines.
 
 ## Start here: check whether compute is material at all
 
-**Do this before opening the model.** On a real customer agent, measured end to end:
+**Do this before opening the model.** Measured end to end on one production agent:
 
-| Line | Monthly |
-|---|---|
-| Bedrock tokens (28,049 in / 827 out per turn × 4.13 invocations) | **$12,000 – $29,000** |
-| Neptune `db.r6g.large` (untouched by migration) | **$240** ($290 in Seoul) |
-| **The entire EKS-vs-AgentCore compute delta being argued about** | **~$19** |
+| Line | Monthly | Moves on migration? |
+|---|---|---|
+| Model tokens | **$12,000 – $29,000** | no — identical on both platforms |
+| The datastore the agent reasons over | **$240** | no — stays exactly where it is |
+| **The entire EKS-vs-AgentCore compute delta being argued about** | **~$19** | yes |
 
 The compute line was **0.04%–1.2% of that agent's run rate.** Everything below this section —
 the levers, the crossover, the endpoint arithmetic — was deciding about one part in a hundred.
+
+The middle row is the one assessors get wrong: **whatever the agent reads from — a graph, a vector
+index, a warehouse, a search cluster, a relational database — is untouched by the migration and is
+usually an order of magnitude above the compute delta.** Price it, put it in the table, and say it
+does not move.
 
 So the first output of a cost conversation is often: **"cost is not your deciding factor, and
 here is the arithmetic showing it."** That is a more valuable and more credible answer than a
@@ -217,8 +222,11 @@ total out of two individually false lines. **Count the customer's actual NAT gat
 balancers and endpoints. Do not apply either default.**
 
 **Prices are region-variant too, not just quotas.** This file argues that quotas vary by region
-and then treats prices as fixed. Seoul is roughly **+30% on VPC endpoints, +21% on Neptune,
-+13% on c6g**, and `c6a.large` is not offered there at all. Price in the customer's region.
+and then treats prices as fixed. Spot-checked against one Asia-Pacific region: roughly **+30% on
+VPC endpoints, +21% on the managed datastore, +13% on the compute instance**, and one instance
+family in the comparison **was not offered there at all** — which silently invalidates a
+node-price comparison rather than making it slightly wrong. Price in the customer's region, and
+confirm the instance types you are comparing exist in it.
 
 **EKS Auto Mode carries a per-instance management fee** (~$0.00918/hr on a large instance,
 about +12%) that earlier versions omitted — so the EKS side of the published comparison was

@@ -52,7 +52,7 @@ changed after a runtime is created.
 |---|---|---|
 | **Single-turn duration** past the request timeout | Redesign as async + `HealthyBusy` polling. Real work, and the timeout is **not adjustable** | `runtime-and-sessions.md` |
 | **Image architecture** — amd64-only dependency | On microVMs: a rebuild (cheap, do it first). On Instances: **not an issue**, x86_64 is supported | `runtime-and-sessions.md` |
-| **Image size** over the cap | Slim the image. A plain Strands agent measured 482 MB — but **any CUDA/ML base image blows the 2 GB cap on its base layer alone** (`nvidia/cuda:12.4-cudnn-runtime` is ~2.1 GB compressed). "Rarely binding" is false for exactly the workloads that need GPU | `runtime-and-sessions.md` |
+| **Image size** over the cap | Slim the image. A minimal interpreted-language agent measured 482 MB `[measured:reference]` — but **any CUDA/ML base image blows the 2 GB cap on its base layer alone** (`nvidia/cuda:12.4-cudnn-runtime` is ~2.1 GB compressed). "Rarely binding" is false for exactly the workloads that need GPU. A compiled-language agent is typically far smaller and will not bind here | `runtime-and-sessions.md` |
 | **GPU** / local inference | **Not** a blocker — use the **Instances** compute type (supported families above). Blocker only if you require microVMs for another reason | `runtime-and-sessions.md` |
 | **Sidecars** required | Restructure, or stay | `runtime-and-sessions.md` |
 | **Protocol** not HTTP / MCP / A2A / AG-UI | Front it with HTTP, or stay | `runtime-and-sessions.md` |
