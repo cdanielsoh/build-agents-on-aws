@@ -166,7 +166,7 @@ what cannot be derived — data residency, compliance, team depth, roadmap.
 | `[measured:customer]` | Observed on **their running workload**. The only kind you may quote as theirs |
 | `[measured:reference]` | Observed on this plugin's reference build — **n=1 agent**. Illustrates shape, never their number |
 | `[read:source]` | **Read in their repo at `file:line`.** Most of a pre-deployment assessment is this |
-| `[read:cluster]` | Read from the **live Kubernetes API** — a CR, a resource schema, RBAC, a controller's env. For a declarative platform this *is* the authoritative config store, and it **outranks `[read:source]`** wherever the two disagree |
+| `[read:cluster]` | Read from the **live control plane** — the Kubernetes API (a resource, its schema, RBAC, a controller's env), or the equivalent API/console of whatever platform runs the agent. Where the agent is defined declaratively, this *is* the authoritative config store, and it **outranks `[read:source]`** wherever the two disagree |
 | `[stated:customer]` | Asserted by the customer — a README, a ticket, a conversation. Often the only source for volume and spend, and not independently checkable |
 | `[verified]` | Queried from a live AWS API (Service Quotas, Pricing, SDK) — **in their account, or say whose**. For a quota, also say **applied or default**: `2500 [verified: default, eu-west-1]`. Bare `[verified]` on a number that exists in both flavours leaves the reader unable to tell whose limit it is |
 | `[docs]` | **AWS** documentation. Not their README — that is `[stated:customer]`, and mislabelling it presents a mid-range guess from an 8-line file as a documented fact |

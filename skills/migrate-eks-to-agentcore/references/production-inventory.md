@@ -155,13 +155,18 @@ parallel**. Phase 1, not Phase 3.
 **And in the proxy case, check whether the app validates the token at all — because
 `CUSTOM_JWT` is often the *first* real validation in the chain, which is a much stronger argument
 than "the authorizer moves."** Read the auth middleware; do not infer from the mode's name.
-Observed on a real platform, at `file:line`: a mode literally named `trusted-proxy` parsed the JWT
-payload with a comment saying validation had already happened upstream, and performed **no
-signature, issuer, audience or expiry check** anywhere in the release. Identity was additionally
-readable from a `user_id` **query parameter** ahead of the token's own `sub`. Two compounding
-facts made it worse: the sub-agents had **no auth middleware at all** on their own ports, and the
-proxy named as the root of trust was pointed at a Service that did not exist — so it had served
-zero user requests while reporting healthy.
+Observed on a real platform, at `file:line`. Its auth mode was **named** for the fact that a proxy
+in front had already validated the token — and it decoded the payload without verifying anything,
+with a source comment stating that validation happened upstream. **No signature, issuer, audience
+or expiry check** existed anywhere in the release. Identity was additionally readable from a
+request **query parameter**, taking precedence over the token's own subject claim. Two compounding
+facts: the sub-agents ran **no auth middleware at all** on their own ports, and the proxy named as
+the root of trust was configured against a backend address that did not resolve — so it reported
+healthy while having served zero user requests.
+
+The generalizable check: **a mode named for an upstream guarantee is a claim about deployment, not
+a control.** Verify the guarantee holds — that the proxy is genuinely in the path, and that
+nothing else can reach the service directly — rather than trusting the name.
 
 That inverts the pitch. Not "we relocate your authorizer" but **"today nothing verifies these
 tokens; the platform would."** It is also a live finding to report before any migration framing,
