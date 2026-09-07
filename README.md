@@ -1,6 +1,6 @@
 # Build Agents on AWS
 
-Claude Code and Codex plugin for building production-grade AI agents on AWS.
+Claude Code, Codex, and Kiro CLI plugin for building production-grade AI agents on AWS.
 Covers the full lifecycle — from agent design to deployment on Bedrock AgentCore.
 
 ## Installation
@@ -19,8 +19,32 @@ codex plugin marketplace add cdanielsoh/build-agents-on-aws
 codex plugin add build-agents-on-aws@build-agents-on-aws
 ```
 
-The repository contains host-specific manifests for both tools while sharing the same skills,
-MCP servers, templates, and workflow procedures.
+### Kiro CLI
+
+Kiro CLI has no plugin marketplace; skills and MCP servers are wired up through a local
+agent config instead. Clone the repo, then generate the agent config with the clone's
+absolute path substituted in (`skill://` resources don't expand `~` or environment
+variables, so the path must be literal):
+
+```bash
+git clone https://github.com/cdanielsoh/build-agents-on-aws.git ~/build-agents-on-aws
+mkdir -p ~/.kiro/agents
+sed "s|__CLONE_PATH__|$HOME/build-agents-on-aws|" \
+  ~/build-agents-on-aws/.kiro-plugin/agent.json > ~/.kiro/agents/build-agents-on-aws.json
+```
+
+Then start a session with it:
+
+```bash
+kiro-cli chat --agent build-agents-on-aws
+```
+
+Re-run the `sed` command if you move the clone. `/new-agent`, `/strands-agent-design`, and
+`/deploy-on-agentcore` become available as slash commands, and both MCP servers load
+automatically, regardless of which directory you run `kiro-cli` from.
+
+The repository contains host-specific manifests for all three tools while sharing the same
+skills, MCP servers, templates, and workflow procedures.
 
 ## Skills
 
@@ -33,9 +57,9 @@ Skills activate automatically when relevant context is detected — mention Stra
 
 ## Workflows
 
-| Workflow | Claude Code | Codex | What it does |
-|----------|-------------|-------|--------------|
-| New agent | `/new-agent [dir]` | `$new-agent [dir]` | Scaffold a runnable Strands + AgentCore project from `templates/` |
+| Workflow | Claude Code | Codex | Kiro CLI | What it does |
+|----------|-------------|-------|----------|--------------|
+| New agent | `/new-agent [dir]` | `$new-agent [dir]` | `/new-agent [dir]` | Scaffold a runnable Strands + AgentCore project from `templates/` |
 
 ## How the Skills Relate
 
@@ -87,7 +111,7 @@ materialized by a command, so the files land on disk verbatim instead of being r
 from a skill document:
 
 In Claude Code, run `/new-agent ./my-agent`. In Codex, run `$new-agent ./my-agent` or ask
-Codex to scaffold a new Strands + AgentCore project.
+Codex to scaffold a new Strands + AgentCore project. In Kiro CLI, run `/new-agent ./my-agent`.
 
 ```
 templates/strands-agentcore/
