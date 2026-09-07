@@ -125,9 +125,19 @@ vocabulary changes.
 # Image architecture — amd64 means a rebuild. Language-independent.
 grep -rn 'platform' Dockerfile* ; grep -rniE 'arch|platform' *.yaml 2>/dev/null
 
-# If there is no Dockerfile — they deploy a prebuilt or third-party image — the grep above is
-# unanswerable. Ask the CLUSTER what it is already running instead. One line, and it is
-# [read:cluster] proof rather than a [read:source] inference:
+# If there is no Dockerfile — they deploy a prebuilt or third-party image — ask the REGISTRY what
+# architectures the image publishes. This is the question the gate asks.
+IMG=$(kubectl get deploy -n <ns> <name> -o jsonpath='{.spec.template.spec.containers[0].image}')
+crane manifest "$IMG" | jq -r '.manifests[]?.platform | "\(.os)/\(.architecture)"'
+# no crane? docker/finch works too:
+finch manifest inspect "$IMG" | jq -r '.manifests[]?.platform.architecture'
+#
+# DO NOT read the NODE's architecture for this. An earlier version of this file did, called it
+# "proof", and it is wrong: the node's arch is what the cluster scheduled onto, not what the
+# image supports. Observed failure — nodes amd64, image an OCI index publishing linux/arm64, so
+# the node read returns "amd64, needs a rebuild" when arm64 already ships and the gate passes.
+# The node read answers a different, still useful question (what is scheduled today), so keep it
+# for that and label it as such:
 kubectl get pod -n <ns> <pod> -o jsonpath='{.spec.nodeName}{"\n"}' \
   | xargs -I{} kubectl get node {} -o jsonpath='{.status.nodeInfo.architecture}{"\n"}'
 

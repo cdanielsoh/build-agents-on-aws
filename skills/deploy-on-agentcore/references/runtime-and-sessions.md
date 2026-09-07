@@ -63,7 +63,7 @@ increases applied.
 | **Request timeout** | **15 min** | **No** |
 | Max payload (request and response) | 100 MB | No |
 | Docker image size | 2 GB | No |
-| Active session workloads per account | 5,000 | Yes |
+| Active session workloads per account | **region-variant — read it live.** 5,000 in us-east-1/us-west-2, **2,500** in ap-northeast-2, ap-southeast-2, eu-west-1 `[verified]`. Quoting one figure globally invents or clears a blocker | Yes |
 | New session creation rate | 25/s | Yes |
 | Runtime data plane rate | 1,000/s | Yes |
 | Endpoints per agent | 10 | Yes |
