@@ -51,6 +51,34 @@ And **check rather than assume** — real services often get the hard parts righ
 parts wrong. While building the reference for this skill I got `asyncio.to_thread` wrong where
 the customer service being modelled got it right.
 
+### If there is a running deployment, it outranks the repo
+
+This whole section assumes the repo describes what is running. When both are available and they
+disagree, **the cluster is the fact and the repo is a claim.** Measured on a deployed CNCF agent
+platform: the repo at HEAD served API version `v1alpha3` with one set of resource kinds, while the
+released chart actually deployed served `v1alpha2` with *differently named* kinds. A manifest
+written from the source tree failed outright:
+
+```
+error: no matches for kind "ModelConfig" in version "kagent.dev/v1alpha3"
+```
+
+Nothing in the repo signalled this. It is the same class as the "a module was imported and did
+not exist, so the image was built from a different tree" finding below, but it fails the other
+way round — the repo is *newer* than production, not older, and looks internally consistent.
+
+So when a deployment exists, take these from the cluster and not from source:
+
+```bash
+kubectl get crd <name> -o jsonpath='{range .spec.versions[*]}{.name} served={.served} storage={.storage}{"\n"}{end}'
+kubectl get deploy <name> -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'   # the running tag
+kubectl get deploy <name> -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}'
+```
+
+Record the divergence itself — a repo ahead of production means the assessment's `file:line`
+evidence describes code the customer is not running, which silently invalidates every
+`[read:source]` tag in the record.
+
 ### Core shape
 
 ```bash
@@ -158,6 +186,31 @@ The last one matters more than it looks: on three of five assessed services a mo
 imported and did not exist, which meant the image was built from a different tree than the one
 under version control. That single fact blocked inbound-auth classification, flush cadence and
 event-loop hygiene at once — one cause, many `unknown`s.
+
+## Reading the cluster — Auto Mode's defaults are not what a chart expects
+
+Two traps, and they share a shape: **an EKS Auto Mode default that is absent or narrower than
+assumed, surfacing as an error that names the symptom rather than the cause.** Both cost real
+diagnostic time on deployed clusters, and both are one `kubectl get` away.
+
+| Assumed | Actual on Auto Mode | Presents as |
+|---|---|---|
+| a default StorageClass exists | **none is marked default.** The only class may be `gp2` on the *legacy in-tree* `kubernetes.io/aws-ebs` provisioner, which no longer exists in 1.34 | a PVC `Pending` forever, and whatever depends on it crash-looping. Observed: `database migration failed ... connection refused` — the dependent component's error, three steps from the cause |
+| the built-in NodePool schedules anything | `general-purpose` is hardcoded **amd64** | an arm64 pod stuck `Pending`, or `exec format error` read as an application crash |
+
+```bash
+kubectl get sc                                            # is ANY class annotated default?
+kubectl get sc <name> -o jsonpath='{.metadata.annotations}'
+kubectl get pvc -A --field-selector=status.phase==Pending
+```
+
+The generalizable rule: **when a component crash-loops on a connection to another component,
+check the other component's scheduling before reading either one's code.** A stateful dependency
+that never got a volume looks exactly like a misconfigured connection string.
+
+Relevant to an assessment because a customer agent with a PVC — Postgres, a vector store, a
+checkpoint volume — has a storage dependency that does **not** transfer to AgentCore, and is
+worth recording as its own inventory row rather than folded into "the session store".
 
 ## Probing AWS — verify, never recall
 
