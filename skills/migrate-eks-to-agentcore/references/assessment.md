@@ -18,6 +18,25 @@ which costs the trust the whole engagement depends on.
 
 Only the last row is a question. Everything above it is work.
 
+## Contents — and the order to actually use them
+
+The sections are grouped by *kind of work*, not by the order you should do it in. **If there is a
+running deployment, the cheap decisive reads are §4 and §5, and they beat §3 on findings per
+minute.** Three independent assessments each reported their sharpest findings coming from §4 while
+§3's source searches returned nothing useful — one against a tree that did not exist at all.
+
+| | Section | When |
+|---|---|---|
+| §1 | [Two things to establish before anything else](#two-things-to-establish-before-anything-else) | always, first — is there a deployment, and whose account are you in |
+| §2 | [Reading the cluster](#reading-the-cluster-auto-modes-defaults-are-not-what-a-chart-expects) | whenever a deployment exists; it outranks source |
+| §3 | [Reading the repo](#reading-the-repo) | when application source exists **and** matches what is deployed. Skip most of it for a declarative platform — the fork is at "First: what is this written in" |
+| §4 | [Run the agent and read the answer](#run-the-agent-and-read-the-answer-the-highest-yield-step-and-it-was-missing) | **start here if you can reach it.** Logs first, then a few turns |
+| §5 | [Probing AWS](#probing-aws-verify-never-recall) | quotas, region availability, prices — read live, never recalled |
+| §6 | [Measuring](#measuring-prefer-what-already-exists) | Gate 2. Check the billing floor before investing in precision |
+| §7 | [Concurrency sweep](#measure-across-a-concurrency-sweep-but-not-before-the-cheap-reads) | when you need per-turn numbers under load. Not before §4 |
+| §8 | [Asking — Gate 3](#asking-gate-3-and-why-it-is-short) | last, and only what you could not derive |
+| §9 | [Confidence — two axes](#confidence-two-axes-not-one) | when writing the record |
+
 ## Two things to establish before anything else
 
 **Is there a running deployment you can reach?** If not — the common pre-engagement case —
