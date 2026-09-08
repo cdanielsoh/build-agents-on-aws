@@ -69,6 +69,36 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
         if s.get("confidence") and s["confidence"] not in schema["suggestion_confidence"]:
             errors.append(f"suggestions.yml {s.get('id')}: confidence `{s['confidence']}` is not "
                           + "/".join(schema["suggestion_confidence"]))
+        alt = s.get("agentcore_alternative")
+        if alt is not None:
+            if not isinstance(alt, dict):
+                errors.append(f"suggestions.yml {s.get('id')}: agentcore_alternative must be a "
+                              "mapping with capability/closes/instead_of")
+            else:
+                cap = alt.get("capability")
+                if cap not in schema["closed_by_families"]["agentcore"]:
+                    errors.append(f"suggestions.yml {s.get('id')}: agentcore_alternative capability "
+                                  f"`{cap}` is not an AgentCore capability — it must be one of "
+                                  + ", ".join(schema["closed_by_families"]["agentcore"]))
+                if alt.get("closes") not in ("fully", "partially"):
+                    errors.append(f"suggestions.yml {s.get('id')}: agentcore_alternative needs "
+                                  "`closes: fully|partially`")
+                if alt.get("closes") == "partially" and not alt.get("note"):
+                    errors.append(f"suggestions.yml {s.get('id')}: `closes: partially` needs a "
+                                  "`note` saying what is left — a partial answer presented as a "
+                                  "whole one is how a migration story fails a security review")
+                if "requires_runtime_move" not in alt:
+                    errors.append(f"suggestions.yml {s.get('id')}: agentcore_alternative needs "
+                                  "`requires_runtime_move`. Only `runtime` actually requires moving "
+                                  "the workload — the rest are callable from an EKS pod, and "
+                                  "omitting this turns an adoptable capability into an implied "
+                                  "migration")
+                for side in ("eks_build", "eks_you_own", "agentcore_config", "agentcore_you_own"):
+                    if not alt.get(side):
+                        notes.append(f"suggestions.yml {s.get('id')}: agentcore_alternative has no "
+                                     f"`{side}`. Survey 2 asks where to close this gap, and that is "
+                                     "unanswerable without both sides — what they build versus "
+                                     "configure, and what they still operate either way")
 
     for x in decisions.values():
         choice = x.get("choice")
@@ -88,6 +118,23 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
         for fid in x.get("residual_gaps") or []:
             if fid not in findings:
                 errors.append(f"decisions.yml {x['id']}: residual_gaps `{fid}` is not a finding id")
+        # `via` — survey 2's second question, and the thing that decides what /plan may write.
+        via = x.get("via")
+        if via is not None:
+            rules_v = schema["decision_via"]
+            if via not in rules_v:
+                errors.append(f"decisions.yml {x['id']}: via `{via}` is not one of "
+                              + ", ".join(rules_v))
+            elif (rules_v[via] or {}).get("requires_alternative"):
+                s = suggestions.get(x.get("suggestion")) or {}
+                own = s.get("closed_by") in schema["closed_by_families"]["agentcore"]
+                if not s.get("agentcore_alternative") and not own:
+                    errors.append(
+                        f"decisions.yml {x['id']}: via `{via}` but {x.get('suggestion')} names no "
+                        "agentcore_alternative and its closed_by is not an AgentCore capability. "
+                        "Choosing the platform path for a gap the platform does not close is the "
+                        "specific claim this field exists to prevent — the record's own "
+                        "does_not_fix usually already says a runtime move leaves it untouched")
 
     if decisions_doc:
         out = decisions_doc.get("outcome")
@@ -117,6 +164,31 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
                 errors.append(f"plan/items.yml {item.get('id')}: has `{banned}`. Verification lives "
                               "in a plan_item receipt, not here — this field can only ever restate "
                               "what the writer hoped. Use `record --plan-item`")
+        # An item whose decision is `via: eks` must carry no artifacts. We have read-only access to
+        # their cluster and do not know their pipeline, so a manifest we invented cannot be applied,
+        # tested, or trusted. Observed: a plan that wrote a NetworkPolicy and a Deployment command
+        # override for a service deployed by a Jenkinsfile it never read. State the change and its
+        # acceptance criteria instead; the customer owns the edit.
+        if did in decisions and decisions[did].get("via") == "eks_build" and item.get("artifacts"):
+            errors.append(f"plan/items.yml {item.get('id')}: decision {did} is `via: eks_build`, so this "
+                          "item must carry no artifacts — it names "
+                          f"{', '.join(map(str, item['artifacts']))}. Write acceptance criteria in "
+                          "plan.md instead: we cannot run a change to their cluster, and a patch we "
+                          "cannot test implies a confidence we do not have")
+
+    # `via: eks` cannot reach `built` or `failing`: both assert we executed something, and what we
+    # would have executed is a change to a service we can only read. This is the rule that makes the
+    # untestable-artifact case structurally impossible rather than merely discouraged.
+    item_via = {}
+    for item in plan_doc.get("items", []):
+        dec = decisions.get(item.get("decision")) or {}
+        item_via[item.get("id")] = dec.get("via")
+    for r in effective:
+        if r.get("kind") == "plan_item" and item_via.get(r["subject"]) == "eks_build" \
+                and r.get("state") in ("built", "failing"):
+            errors.append(f"receipts.jsonl {r['id']}: plan_item {r['subject']} is `{r['state']}`, but "
+                          "its decision is `via: eks_build`. Running their cluster change is not something "
+                          "we did — `planned` is the honest state, and the customer reports the result")
 
     for r in effective:
         if r.get("kind") != "plan_item":
@@ -172,6 +244,19 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
         if last.get("state") == "failing":
             notes.append(f"plan item {iid} is `failing` ({last.get('verified_by')}). A plan whose "
                          "first concrete action fails is worse than no plan — fix or restate it")
+
+    # A scaffold with no items.yml is a referential error, not a coverage gap. Files were written and
+    # nothing says which decision authorised them — the reverse index cannot run, so an artifact
+    # invented from nothing is indistinguishable from one the customer asked for. Observed twice on
+    # real plans: fourteen generated files, no items.yml, no MANIFEST.md, zero plan_item receipts,
+    # and validate exited 0 because it only ever checked items that already existed.
+    scaffold_dirs = [p for p in (d / "plan" / "scaffold", d / "scaffold") if p.is_dir()]
+    if scaffold_dirs and not plan_doc.get("items"):
+        n_files = sum(1 for p in scaffold_dirs[0].rglob("*")
+                      if p.is_file() and p.suffix not in (".pyc",))
+        errors.append(f"{scaffold_dirs[0].name}/ holds {n_files} generated file(s) but plan/items.yml "
+                      "has no items. Nothing records which decision authorised them, so neither "
+                      "index can be built and invention cannot be told from instruction")
 
     # MANIFEST.md was absent entirely on the one real plan produced, along with items.yml — the two
     # files whose only job is catching omission. Absence is not a referential error, so this is a
