@@ -114,6 +114,36 @@ kinds:
     subject: context_field
     takes_value: true
 
+  # Written by /plan, not by /assess — the only kind that is. It exists because the plan command's
+  # highest-value step, "run what you generated", produced nothing a tool could read: a plan could
+  # present a test as a working pre-deploy gate with no record of it having been executed. That is
+  # the same assertion-that-cannot-fail defect the command spends a page warning about in the
+  # customer's own tests, so the instrument was committing it while diagnosing it.
+  #
+  # Verification lives here and ONLY here. `plan/items.yml` deliberately carries no status field —
+  # see the note at the top of this file about removing the ability to assert rather than adding a
+  # check for lying. MANIFEST.md's verified column is generated from these receipts, so a manifest
+  # claiming verification without one cannot be produced.
+  plan_item:
+    subject: free_text              # the plan/items.yml id, e.g. P-0.1. validate checks it exists
+    state:
+      # Generated, executed, passed. The only state that may be described as verified.
+      - built
+      # Generated, executed, FAILED. Worth a receipt of its own rather than a silent retry: a plan
+      # whose first concrete action fails is worse than no plan, and the failure is the finding.
+      - failing
+      # Generated, could not be executed here. Needs blocked_by. Not the same claim as `built`,
+      # which is exactly the distinction prose kept losing.
+      - unverifiable
+      # Deliberately not executed — a cutover step, or work that is the customer's to run.
+      # An honest state, not a gap.
+      - planned
+    optional:
+      - verified_by                 # the command actually run. required for built and failing
+      - blocked_by                  # required for unverifiable
+      - mutation_tested             # did you break the thing the test guards and watch it fail?
+      - artifacts                   # paths written, so MANIFEST.md is generated not assembled
+
 # ── Subject vocabularies ────────────────────────────────────────────────────────────────────
 
 # Gate 0 checks. Prose definitions, cost to resolve and escape hatches: constraints.md.

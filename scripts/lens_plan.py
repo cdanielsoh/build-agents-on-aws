@@ -71,7 +71,11 @@ SURVEY_PROMPTS = [
     ("product_owner_reachable", "S6  Is there someone who can answer product questions?"),
 ]
 
-NODE_KINDS = ("question", "remedy", "node", "gate", "measurement", "topology", "artifact", "context")
+NODE_KINDS = ("question", "remedy", "node", "gate", "measurement", "topology", "artifact", "context",
+              # written by /plan rather than /assess, into the same log. One log, because staleness
+              # is only computable when the plan's verification and the observations it rests on
+              # carry comparable timestamps.
+              "plan_item")
 
 
 # ── loading ─────────────────────────────────────────────────────────────────────────────────
@@ -236,7 +240,7 @@ def print_resolve(res: dict) -> None:
 KIND_FLAGS = {
     "question": "--question", "remedy": "--remedy", "node": "--node", "gate": "--gate",
     "measurement": "--measurement", "topology": "--topology", "artifact": "--artifact",
-    "context": "--context",
+    "context": "--context", "plan_item": "--plan-item",
 }
 
 
@@ -251,6 +255,11 @@ def valid_subjects(kind: str, graph: dict, schema: dict) -> set[str] | None:
         "topology": set(schema["topology_fields"]),
         "context": set(schema["context_fields"]),
         "artifact": None,
+        # Free text here, cross-checked against plan/items.yml by `validate` instead. The id is
+        # authored by /plan, so there is no fixed vocabulary to validate against at record time —
+        # and requiring items.yml to exist first would make the receipt unwritable during the run
+        # that produces it.
+        "plan_item": None,
     }[kind]
 
 
@@ -332,6 +341,19 @@ def validate_receipt(rec: dict, graph: dict, schema: dict, known_ids: set[str]) 
         errs.append("`present_but_ineffective` needs --ineffective-because. "
                     "`effective: false` alone restated the state on 13 of 14 rows measured")
 
+    if kind == "plan_item":
+        state = rec.get("state")
+        if state in ("built", "failing") and not rec.get("verified_by"):
+            errs.append(f"`{state}` needs --verified-by: the command you actually ran. Without it "
+                        "the receipt asserts execution and records nothing about it, which is the "
+                        "defect this kind exists to close")
+        if state == "unverifiable" and not rec.get("blocked_by"):
+            errs.append("`unverifiable` needs --blocked-by. An artifact nobody could run is a fine "
+                        "outcome; one with no stated reason is indistinguishable from untried")
+        if state in ("unverifiable", "planned") and rec.get("verified_by"):
+            errs.append(f"`{state}` takes no --verified-by — it says nothing was run. Use `built` "
+                        "or `failing` if something was")
+
     if "supersedes" in rec:
         if rec["supersedes"] not in known_ids:
             errs.append(f"supersedes `{rec['supersedes']}`, which is not an existing receipt id")
@@ -389,11 +411,17 @@ def cmd_record(a, graph: dict, schema: dict) -> int:
                             ("source_of_value", "source_of_value"),
                             ("is_true_high_water_mark", "is_true_high_water_mark"),
                             ("derived_from", "derived_from"), ("how_to_get_it", "how_to_get_it"),
+                            ("verified_by", "verified_by"), ("mutation_tested", "mutation_tested"),
+                            ("artifacts", "artifacts"),
                             ("supersedes", "supersedes"), ("reason", "reason")):
             v = getattr(a, flag, None)
             if v is not None:
                 rec[field] = coerce(v) if field in (
-                    "remedy_verified", "requires_runtime_move", "is_true_high_water_mark") else v
+                    "remedy_verified", "requires_runtime_move", "is_true_high_water_mark",
+                    "mutation_tested") else v
+        # A comma-separated list is what a shell can produce; a list is what MANIFEST.md needs.
+        if isinstance(rec.get("artifacts"), str):
+            rec["artifacts"] = [p.strip() for p in rec["artifacts"].split(",") if p.strip()]
         if a.value is not None:
             rec["value"] = coerce(a.value)
         if a.by:
@@ -721,7 +749,9 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
             notes.append("decisions.yml has no `decided_with` — nobody is recorded as having chosen, "
                          "so every entry is the assessor's own verdict wearing a decision's clothes")
 
+    item_ids = set()
     for item in plan_doc.get("items", []):
+        item_ids.add(item.get("id"))
         did = item.get("decision")
         if not did:
             errors.append(f"plan/items.yml {item.get('id')}: no decision id. A plan item with no "
@@ -731,6 +761,23 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
         elif decisions[did].get("choice") != "proceed":
             errors.append(f"plan/items.yml {item.get('id')}: decision {did} is "
                           f"`{decisions[did].get('choice')}`, not `proceed`")
+        # Verification is not storable here. items.yml is written by the same pass that would claim
+        # the verification, so a status field in it is a self-assertion with nothing to check it —
+        # the defect that deleting the old `plan:` block removed from the assessment side.
+        for banned in ("verified", "built", "status", "state", "tested", "passing"):
+            if banned in item:
+                errors.append(f"plan/items.yml {item.get('id')}: has `{banned}`. Verification lives "
+                              "in a plan_item receipt, not here — this field can only ever restate "
+                              "what the writer hoped. Use `record --plan-item`")
+
+    for r in effective:
+        if r.get("kind") != "plan_item":
+            continue
+        if plan_doc and r["subject"] not in item_ids:
+            near = [i for i in sorted(item_ids) if str(i)[:3] == str(r["subject"])[:3]]
+            errors.append(f"receipts.jsonl {r['id']}: plan_item `{r['subject']}` is in no "
+                          "plan/items.yml entry"
+                          + (f" — did you mean {', '.join(map(str, near[:3]))}?" if near else ""))
 
     # ── reports. Never fail on these. `unreachable` and `not_permitted` are recordable states,
     # and a hook that punishes an incomplete walk teaches assessors to fabricate receipts. ──
@@ -754,6 +801,48 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
         if not any(x.get("suggestion") == sid for x in decisions.values()):
             notes.append(f"{sid} has no decision — undecided by absence, which is honest. "
                          "Survey 2 has not covered it")
+
+    # Plan-side coverage. Notes, not errors: the same reasoning as the assessment walk — punishing
+    # an incomplete record teaches people to write receipts for work they did not do, and an item
+    # nobody could run is an honest outcome that `unverifiable` exists to carry.
+    pi = {}
+    for r in effective:
+        if r.get("kind") == "plan_item":
+            pi.setdefault(r["subject"], []).append(r)
+    for iid in sorted(item_ids, key=lambda x: _sort_key(str(x))):
+        if iid not in pi:
+            notes.append(f"plan item {iid} has no plan_item receipt — nothing records whether it was "
+                         "built, ran, or could not be run. plan.md must not describe it as verified")
+    for iid, rs in sorted(pi.items(), key=lambda kv: _sort_key(str(kv[0]))):
+        last = rs[-1]
+        if last.get("state") == "built" and "mutation_tested" not in last:
+            notes.append(f"plan item {iid} is `built` with no mutation_tested. Measured on one "
+                         "generated suite, 3 of 6 assertions could not fail — and all 3 passed")
+        elif last.get("state") == "built" and last.get("mutation_tested") is False:
+            notes.append(f"plan item {iid} is `built` and mutation_tested: false. Passing is not "
+                         "evidence until you have broken it once — say so in plan.md at that step")
+        if last.get("state") == "failing":
+            notes.append(f"plan item {iid} is `failing` ({last.get('verified_by')}). A plan whose "
+                         "first concrete action fails is worse than no plan — fix or restate it")
+
+    # MANIFEST.md was absent entirely on the one real plan produced, along with items.yml — the two
+    # files whose only job is catching omission. Absence is not a referential error, so this is a
+    # note; but it is the note most worth printing, because nothing else in the record misses it.
+    if item_ids:
+        man = next((p for p in (d / "plan" / "scaffold" / "MANIFEST.md",
+                                d / "scaffold" / "MANIFEST.md") if p.exists()), None)
+        if man is None:
+            notes.append("plan items exist but no scaffold/MANIFEST.md — run `lens_plan.py "
+                         "manifest`. Its reverse index is the only thing that catches a decision "
+                         "with no plan item, which is how one plan skipped a severity: high finding "
+                         "while claiming thirteen closed")
+        elif pi:
+            newest_pi = max(r.get("at", "") for rs in pi.values() for r in rs)
+            written = _dt.datetime.fromtimestamp(man.stat().st_mtime, _dt.timezone.utc) \
+                         .strftime("%Y-%m-%dT%H:%M:%SZ")
+            if newest_pi > written:
+                notes.append("scaffold/MANIFEST.md is older than the newest plan_item receipt — "
+                             "re-run `lens_plan.py manifest` so its verified column matches the log")
 
     triaged = {t.get("finding") for t in (assessment.get("triage") or [])}
     for k, f in findings.items():
@@ -791,6 +880,108 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
         print(f"\nvalidate: {len(notes)} note(s), no referential errors. Coverage is never an error — "
               "`unreachable` and `not_permitted` are recordable states.")
     return 1 if errors else 0
+
+
+# ── manifest ────────────────────────────────────────────────────────────────────────────────
+
+VERIFIED_LABEL = {
+    "built": "built, ran, passed",
+    "failing": "**ran and FAILED**",
+    "unverifiable": "generated, not runnable here",
+    "planned": "not executed by design",
+}
+
+
+def cmd_manifest(a, graph: dict, schema: dict) -> int:
+    """MANIFEST.md, generated. The forward index catches invention; the reverse index catches
+    omission, which is the failure that actually happened — one plan skipped a severity: high
+    finding entirely while claiming thirteen closed. Nothing in its artifact list was wrong; the
+    list simply ended. Assembling this by hand is how that survives, so it is generated."""
+    d = a.dir
+    out = pathlib.Path(a.out) if a.out else d / "plan"
+    plan_doc = load_yaml(out / "items.yml") or load_yaml(d / "plan" / "items.yml") \
+        or load_yaml(d / "items.yml") or {}
+    items = plan_doc.get("items", [])
+    if not items:
+        return err(f"no items.yml under {out} — /plan writes it before this runs. A manifest with "
+                   "no items would report full coverage of nothing")
+
+    decisions = {x["id"]: x for x in (load_yaml(d / "decisions.yml") or {}).get("decisions", [])}
+    suggestions = {s["id"]: s for s in (load_yaml(d / "suggestions.yml") or {}).get("suggestions", [])}
+    effective, _ = split_supersession(load_receipts(d))
+    latest_pi: dict[str, dict] = {}
+    for r in effective:
+        if r.get("kind") == "plan_item":
+            latest_pi[r["subject"]] = r
+
+    by_decision: dict[str, list[dict]] = {}
+    for it in items:
+        by_decision.setdefault(it.get("decision"), []).append(it)
+
+    L = [f"# Plan manifest — generated by `lens_plan.py manifest` at {now()}", "",
+         "Do not hand-edit. The verified column is projected from `plan_item` receipts, so a row",
+         "cannot claim verification that was never recorded.", ""]
+
+    L += ["## Artifact → decision (catches invention)", "",
+          "| Artifact | Item | Decision | Closes | Verified |", "|---|---|---|---|---|"]
+    for it in items:
+        rec = latest_pi.get(it.get("id")) or {}
+        arts = rec.get("artifacts") or it.get("artifacts") or ["—"]
+        sug = suggestions.get((decisions.get(it.get("decision")) or {}).get("suggestion")) or {}
+        closes = ", ".join(sug.get("closes") or []) or "—"
+        label = VERIFIED_LABEL.get(rec.get("state"), "**no receipt**")
+        if rec.get("state") == "built" and rec.get("mutation_tested") is not True:
+            label += " (not mutation-tested)"
+        for n, art in enumerate(arts):
+            L.append(f"| `{art}` | {it.get('id') if n == 0 else ''} "
+                     f"| {it.get('decision') if n == 0 else ''} | {closes if n == 0 else ''} "
+                     f"| {label if n == 0 else ''} |")
+
+    L += ["", "## Decision → artifact (catches omission)", "",
+          "Every `proceed` decision appears here. `not addressed` is a fine answer — writing it",
+          "turns a gap in the plan into something the customer can overrule.", "",
+          "| Decision | Choice | Plan items | Or why not |", "|---|---|---|---|"]
+    n_proceed = n_addressed = 0
+    for did, x in sorted(decisions.items()):
+        if x.get("choice") != "proceed":
+            continue
+        n_proceed += 1
+        got = by_decision.get(did) or []
+        if got:
+            n_addressed += 1
+        L.append(f"| {did} | proceed | {', '.join(str(i.get('id')) for i in got) or '—'} "
+                 f"| {'' if got else '**NOT ADDRESSED — state the reason here**'} |")
+
+    other = [(k, v) for k, v in sorted(decisions.items()) if v.get("choice") != "proceed"]
+    if other:
+        L += ["", "## Declined and deferred (so the plan does not read as if nothing was refused)",
+              "", "| Decision | Choice | In their words |", "|---|---|---|"]
+        for did, x in other:
+            why = x.get("reason") or x.get("revisit_when") or x.get("rationale") or "—"
+            L.append(f"| {did} | {x.get('choice')} | {str(why).replace(chr(10), ' ')} |")
+
+    counts: dict[str, int] = {}
+    for it in items:
+        counts[(latest_pi.get(it.get("id")) or {}).get("state") or "no receipt"] = \
+            counts.get((latest_pi.get(it.get("id")) or {}).get("state") or "no receipt", 0) + 1
+    L += ["", "## Counts, derived — not asserted", "",
+          f"- plan items: **{len(items)}**",
+          f"- `proceed` decisions: **{n_proceed}**, with at least one plan item: **{n_addressed}**",
+          "- item states: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())), "",
+          "Any claim in `plan.md` about how many findings were closed must be derived from the",
+          "second table above, not from the record's severity totals."]
+
+    out.mkdir(parents=True, exist_ok=True)
+    target = out / "scaffold" / "MANIFEST.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(L) + "\n")
+    print(f"wrote {target}")
+    print(f"  {len(items)} items, {n_addressed}/{n_proceed} proceed decisions addressed, "
+          + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
+    if n_addressed < n_proceed:
+        print("  fill in the `Or why not` column before handing this over — a blank there is the "
+              "omission this table exists to surface")
+    return 0
 
 
 # ── selfcheck ───────────────────────────────────────────────────────────────────────────────
@@ -922,6 +1113,11 @@ def main() -> int:
     c.add_argument("--is-true-high-water-mark", dest="is_true_high_water_mark")
     c.add_argument("--derived-from", dest="derived_from")
     c.add_argument("--how-to-get-it", dest="how_to_get_it")
+    c.add_argument("--verified-by", dest="verified_by",
+                   help="plan_item: the command actually run. Required for built and failing")
+    c.add_argument("--mutation-tested", dest="mutation_tested",
+                   help="plan_item: did you break what the test guards and watch it fail?")
+    c.add_argument("--artifacts", help="plan_item: comma-separated paths written")
     c.add_argument("--supersedes")
     c.add_argument("--reason", choices=["reinterpretation", "re-observation"])
     c.add_argument("--by", choices=["assessor", "customer", "reviewer"])
@@ -938,6 +1134,10 @@ def main() -> int:
 
     v = sub.add_parser("validate", help="referential integrity. Never fails on coverage")
     v.set_defaults(fn=cmd_validate)
+
+    m = sub.add_parser("manifest", help="items.yml + receipts → plan/scaffold/MANIFEST.md")
+    m.add_argument("--out", help="plan directory, if /plan wrote it outside .agentcore-migration")
+    m.set_defaults(fn=cmd_manifest)
 
     k = sub.add_parser("selfcheck", help="the instrument: do graph, schema and prose agree?")
     k.set_defaults(fn=cmd_selfcheck)
