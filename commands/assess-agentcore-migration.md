@@ -349,6 +349,16 @@ Each suggestion is **one change** that closes every finding it cites, and carrie
 ground it, what it buys, **what it does not fix**, its cost, and your confidence. A suggestion
 without `does_not_fix` is a pitch with citations. Order `requires_runtime_move: false` first.
 
+Three things about how that list reads to the customer, all of them owner-documented:
+
+- **No section-divider comments over the sort.** A header saying "no runtime move needed" reads as
+  "you don't need to migrate" when it sits over 21 of 22 rows. The sort already carries it.
+- **Label each row with `closed_by`** — the service or the customer's own component. Only
+  `closed_by: runtime` mentions moving, because it is the only one where moving is required.
+- **`effort` is scope, not a duration.** Files, call sites, boundaries crossed, whether a staged
+  rollout is needed. A day count for work in a repository you have read-only access to is a guess
+  wearing the same font as the measurements.
+
 Then `$L validate`. It fails on ungrounded suggestions — empty or dangling `closes` / `grounded_in` —
 and it *reports* a finding that needs action and appears in no suggestion. That last one is the gap a
 model under context pressure creates, and it is invisible without the check. Deliberate omission is

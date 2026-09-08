@@ -50,9 +50,9 @@ lens_plan.py record --remedy AGENTSEC02 --component tool_allowlist \
 | `ineffective_because` | *why* it does not work | `never_invoked` is the severe class: exists, reads as present in review, zero call sites. **Required** whenever `state` is `present_but_ineffective` — `record` rejects the receipt without it |
 | `defect_owner` | whose bug is it — `customer`, `platform`, `operator_config`? | required when a **platform-supplied** mechanism is ineffective. Without it the record aims the fix at the wrong people |
 | `--component` | which of several rows sharing this practice | This is how "41 questions, 66 rows" stops being a coverage dispute: both numbers are now computed from the same receipts |
-| `closed_by` | what closes it — **a separate `remedy` receipt** | **Non-AgentCore answers first** — `platform_config`, `customer_code`, `cluster_config`, `iam_policy`, `upstream_contribution`. Reaching for a component to make a row look productive is the failure mode |
+| `closed_by` | what closes it — **a separate `remedy` receipt** | **Non-AgentCore answers first** — `platform_config`, `customer_code`, `cluster_config`, `iam_policy`, `upstream_contribution`. Reaching for a component to make a row look productive is the failure mode. This is also the field a suggestion is **labelled** with, because it names something rather than negating something |
 | `remedy_verified` | did you confirm the field takes effect? | on the remedy receipt, because the remedy is its own observation with its own evidence |
-| `requires_runtime_move` | does acting on it need a replatform? | `false` for almost everything. These are what the customer can do this quarter, and they lead the report |
+| `requires_runtime_move` | does acting on it need a replatform? | `false` for almost everything, and those lead the report. **Sorts the list; does not label it** — "no runtime move needed", printed as a heading over most of the file, reads as "no migration needed". → [record-and-adopt.md](record-and-adopt.md#suggestions-grouped-grounded-and-honest) |
 
 Three rules that follow, and that the tables below cannot express on their own:
 
@@ -526,8 +526,9 @@ they can adopt without a replatform before things that need one.
 2. **What is already right** — name it. An assessment that finds only faults reads as a pretext,
    and a customer who recognises their own good decisions in your list believes the rest of it.
 3. **Gaps closable with no platform change** — Gateway, Policy, Identity, Memory, Evaluations,
-   Observability alongside their existing runtime. This is usually the largest and most
-   actionable bucket, and it is the one that gets acted on this quarter.
+   Observability alongside their existing runtime. Usually the largest and most actionable bucket.
+   Name the capability or the component that closes each one; do not head the section with the
+   absence of a runtime move, and do not put a calendar on it — when they act is theirs.
 4. **What a runtime move would additionally change** — deletions with line counts where you
    can, because they are concrete; and the ceilings or isolation properties that only Runtime
    provides. Clearly marked as requiring a replatform.

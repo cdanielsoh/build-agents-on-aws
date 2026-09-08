@@ -48,7 +48,9 @@ suggestions:
     buys: tool authorization stops living inside the process a prompt injection reaches
     does_not_fix: the approval gate, which has no chart field at all — that is S-05
     cost:
-      effort: one values change plus a policy file; a day, plus a LOG_ONLY rollout
+      # SCOPE, not duration. Files and call sites, boundaries crossed, whether a staged rollout is
+      # required, what must land first. See "effort is scope" below — a day count is not ours to give
+      effort: chart values.yaml plus one policy file; needs a LOG_ONLY period before ENFORCE
       one_off: none | <usd> | open
       recurring: none | <usd/month> | open
     confidence: high | medium | low
@@ -85,13 +87,73 @@ Four rules, and each exists because its absence has produced a specific failure:
    so, so the flow does not read as a funnel.
 
 **Ordering: no-runtime-move first, free before paid.** Everything with
-`requires_runtime_move: false` comes before anything needing a replatform, because it is what they
-can do this quarter. That sort is mechanical; every other judgement in the file is yours.
+`requires_runtime_move: false` comes before anything needing a replatform, because those are the ones
+they can act on without a replatform decision. That sort is mechanical; every other judgement in the
+file is yours.
+
+**Do not write section-divider comments over that sort.** Runs of this instrument grouped the sorted
+list under headers like *"런타임 이동이 필요 없는 것"* / *"no runtime move needed"*, and they do three
+jobs of which only one is real:
+
+| The header was doing | Verdict |
+|---|---|
+| grouping the list | redundant — every suggestion carries `closed_by` and `requires_runtime_move`, and the file is already sorted by them |
+| asserting that migration is unnecessary | **misleading.** Negated, on 21 of 22 rows, it reads as "you don't need to migrate" rather than "this particular gap closes without moving" |
+| implying a timeframe ("this quarter") | **not ours to claim** — see below |
+
+The sort carries the only part that was information. Leave the list unheaded.
+
+**Label each suggestion with `closed_by`, not with the absence of a runtime move.** A negation invites
+the reader to generalise it; a service name states a fact and generalises to nothing. Only one value
+mentions moving, because it is the only one where moving is true:
+
+| `closed_by` | Label |
+|---|---|
+| `customer_code` · `cluster_config` · `platform_config` · `iam_policy` · `upstream_contribution` | the customer's own — name which one |
+| `gateway` · `policy` · `identity` · `memory` · `evaluations` · `observability` · `code_interpreter` · `browser` | `AgentCore <capability>` |
+| `runtime` | `AgentCore Runtime` — **and this one says the move is required** |
+
+This is derivable from a field, so it belongs in a generator eventually rather than in this
+convention. Until then it is a rule here, and a rule here is weaker than a check.
 
 **Grounding is structural, not a habit.** `closes` and `grounded_in` must both be non-empty and must
 resolve, or `validate` fails. And `validate` reports the reverse: a finding that needs action and
 appears in **no** suggestion. That is the gap a model under context pressure creates, and it is
 invisible without the check. Deliberate omission is fine — say so in `assessment.yml`'s `triage`.
+
+## `effort` is scope, not duration
+
+`cost` is required on every suggestion and this file used to demonstrate filling it with *"a day, plus
+a LOG_ONLY rollout"* — so the example taught the guess, and runs produced "1~2 days", "2~4 days",
+"4~8 weeks" for changes in a repository they had read-only access to.
+
+None of that is knowable from here. Duration is a property of **their** organisation: review process,
+test-suite runtime, sprint boundaries, who is on call. One real record estimated the days needed to
+change a deployment path while listing *which pipeline actually built the running image* as an open
+question.
+
+It also contradicts a rule the instrument enforces elsewhere. `/plan` refuses to write a patch for a
+`via: eks_build` item because **a patch you cannot test implies a confidence you do not have** — and
+then a day-count says how long their team will take to write and test that same patch. Identical
+defect, opposite direction.
+
+So record what the repository shows:
+
+| Record | Not |
+|---|---|
+| which files, and how many call sites | "half a day" |
+| whether it crosses a repo or a team boundary | "1~2 days" |
+| whether a staged rollout is required (`LOG_ONLY` → `ENFORCE`) — a **sequence**, not a duration | "days to weeks" |
+| what has to land first | — |
+| that you could not test it here | — |
+
+One exception: a duration the **customer** gives you is a fact about them, and records like any other
+statement of theirs — tagged `stated:customer`. The rule is only that a duration may not originate
+with us.
+
+`one_off` and `recurring` are unaffected. Money is sourceable: price it from the Pricing API and cite
+the receipt, or write `open`. One record priced endpoints live and corrected $14.60 to $21.90 on
+re-observation, which is exactly the standard. It is `effort` alone that has no source.
 
 ## Survey 2 — the decisions
 
