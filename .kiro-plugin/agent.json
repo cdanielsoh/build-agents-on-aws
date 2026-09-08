@@ -2,6 +2,13 @@
   "name": "build-agents-on-aws",
   "description": "Design and deploy production-grade AI agents on AWS. Strands Agents SDK design patterns (prompt architecture, tool APIs, interventions, native context management, topology, evals) and Bedrock AgentCore deployment (runtime, MCP Gateway with interceptors and inference targets, Identity 2LO/3LO, Cedar Policy, Agent Registry, Evaluations, Observability, CDK). Includes a tested, command-scaffolded template.",
   "prompt": "You help design and deploy production-grade AI agents on AWS using the Strands Agents SDK and Amazon Bedrock AgentCore. Use the strands-agent-design skill for prompt architecture, tool design, security, context management, agent topology, and evals. Use the deploy-on-agentcore skill for Runtime, MCP Gateway, Identity, Cedar Policy, Agent Registry, Evaluations, Observability, and CDK infrastructure. Use the new-agent skill to scaffold a runnable project from the bundled template instead of hand-writing files.",
+  "tools": [
+    "*"
+  ],
+  "allowedTools": [
+    "fs_read",
+    "@strands-agents"
+  ],
   "resources": [
     "skill://__CLONE_PATH__/skills/*/SKILL.md"
   ],

@@ -39,9 +39,18 @@ Then start a session with it:
 kiro-cli chat --agent build-agents-on-aws
 ```
 
-Re-run the `sed` command if you move the clone. `/new-agent`, `/strands-agent-design`, and
-`/deploy-on-agentcore` become available as slash commands, and both MCP servers load
-automatically, regardless of which directory you run `kiro-cli` from.
+Re-run the `sed` command if you move the clone. All four skills load as context resources and
+both MCP servers start automatically, regardless of which directory you run `kiro-cli` from.
+
+Kiro CLI's slash commands are a fixed built-in set — skills do **not** register as slash
+commands the way they do in Claude Code and Codex. Invoke a skill by describing the task
+("scaffold a new Strands agent in ./my-agent", "assess this EKS agent for AgentCore
+migration"); the loaded skill descriptions are what route the request.
+
+The `tools` and `allowedTools` fields in the agent config are load-bearing. A Kiro agent
+config that omits `tools` gets an **empty** tool set, and the model will narrate tool calls as
+prose instead of making them ("I don't have a tool call available in this turn…"). Keep
+`"tools": ["*"]`.
 
 The repository contains host-specific manifests for all three tools while sharing the same
 skills, MCP servers, templates, and workflow procedures.
@@ -60,9 +69,12 @@ Skills activate automatically when relevant context is detected — mention Stra
 
 | Workflow | Claude Code | Codex | Kiro CLI | What it does |
 |----------|-------------|-------|----------|--------------|
-| New agent | `/new-agent [dir]` | `$new-agent [dir]` | `/new-agent [dir]` | Scaffold a runnable Strands + AgentCore project from `templates/` |
-| Assess a migration | `/assess-agentcore-migration [repo]` | `$assess-agentcore-migration [repo]` | `/assess-agentcore-migration [repo]` | Walk the 41 Lens questions, log every observation as a receipt, then propose grouped changes for the customer to decide on |
-| Plan a migration | `/plan-agentcore-migration` | `$plan-agentcore-migration` | `/plan-agentcore-migration` | Turn their decisions into a phased plan plus scaffolding. Acts only on decisions; makes no live changes |
+| New agent | `/new-agent [dir]` | `$new-agent [dir]` | "scaffold a new Strands agent in [dir]" | Scaffold a runnable Strands + AgentCore project from `templates/` |
+| Assess a migration | `/assess-agentcore-migration [repo]` | `$assess-agentcore-migration [repo]` | "assess [repo] for AgentCore migration" | Walk the 41 Lens questions, log every observation as a receipt, then propose grouped changes for the customer to decide on |
+| Plan a migration | `/plan-agentcore-migration` | `$plan-agentcore-migration` | "plan the AgentCore migration from those decisions" | Turn their decisions into a phased plan plus scaffolding. Acts only on decisions; makes no live changes |
+
+Kiro CLI has no plugin-supplied slash commands, so its column is a natural-language request
+rather than a command.
 
 ## How the Skills Relate
 
@@ -133,7 +145,8 @@ materialized by a command, so the files land on disk verbatim instead of being r
 from a skill document:
 
 In Claude Code, run `/new-agent ./my-agent`. In Codex, run `$new-agent ./my-agent` or ask
-Codex to scaffold a new Strands + AgentCore project. In Kiro CLI, run `/new-agent ./my-agent`.
+Codex to scaffold a new Strands + AgentCore project. In Kiro CLI, ask it to scaffold a new
+Strands + AgentCore project in `./my-agent`.
 
 ```
 templates/strands-agentcore/
