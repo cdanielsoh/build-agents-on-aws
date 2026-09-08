@@ -241,13 +241,71 @@ suggestion_required_fields:
   [id, change, closes, grounded_in, buys, does_not_fix, cost, confidence, requires_runtime_move]
 suggestion_confidence: [high, medium, low]
 
+# OPTIONAL on a suggestion, and its absence is meaningful: there is no platform path, so the only
+# way to close this gap is in the customer's own service. Absent for a wrong system prompt or a
+# wrong README — nothing about a runtime move corrects either.
+#
+# This exists so the migration case is the SUM of per-gap answers rather than a separate claim. A
+# customer who picks the platform path on five gaps has a business case made of five capabilities
+# they chose; one who picks their own service every time has an honest outcome the tool supports.
+# It also stops the failure this was written after: presenting fixes as migration benefits when the
+# record's own `does_not_fix` field said a runtime move does not touch them.
+suggestion_agentcore_alternative_fields:
+  capability: agentcore_capability   # must be one of the AgentCore members of `closed_by`
+  closes: [fully, partially]         # partially needs `note` saying what is left
+  note: free_text                    # optional; required when closes: partially
+
+  # The comparison itself, symmetric on purpose. "Do you want it, and where" is only answerable if
+  # both sides are on the page, and the side that decides it is usually not cost but what the
+  # customer still OPERATES afterwards. A managed authorizer and 7 lines of PyJWT both validate a
+  # token; only one of them means somebody owns JWKS caching and key rotation at 3am.
+  eks_build: free_text               # what they write, concretely, in their service
+  eks_you_own: free_text             # what they operate forever after writing it
+  agentcore_config: free_text        # what they configure instead
+  agentcore_you_own: free_text       # what is still theirs on the managed path
+
+  # THE fact that decides whether this option is even available today, and the one most easily
+  # glossed. Only `runtime` requires moving the workload. Gateway, Policy, Memory, Evaluations,
+  # Observability, Identity, Code Interpreter and Browser are all callable FROM an EKS pod — which is
+  # what the `adopt_components` outcome exists for, and it is usually the honest recommendation.
+  # Saying "AgentCore gives you this" without saying "after you migrate" is the version of this
+  # conversation that fails in the customer's architecture review.
+  requires_runtime_move: [true, false]
+
+# The two families inside `closed_by`, named so routing is not a judgement call. /plan authors
+# artifacts for the second family and writes NO files for the first — we cannot run a change to
+# their cluster, and a patch we cannot test implies a confidence we do not have.
+closed_by_families:
+  customers_own:  [platform_config, customer_code, cluster_config, iam_policy, upstream_contribution]
+  agentcore:      [gateway, policy, identity, memory, evaluations, observability,
+                   code_interpreter, browser, runtime]
+
 decision_choices:
   # There is deliberately no `undecided`. An undecided suggestion has NO entry, and `validate`
   # reports it as undecided by absence — so a column of `undecided` can no longer read as
   # "we asked and they never replied" on an engagement where nobody was ever asked.
-  proceed:  {}
+  #
+  # `via` is survey 2's second question: not just whether to close a gap, but WHERE. It is required
+  # on proceed because it decides what /plan may write, and it is only worth ASKING where the
+  # suggestion carries an agentcore_alternative — everywhere else `eks` is the only truthful answer
+  # and the question would be theatre.
+  proceed:  { requires: [via] }
   declined: { requires: [reason] }
   deferred: { requires: [reason, revisit_when] }
+
+decision_via:
+  # They build it in the service they have. /plan writes NO files — the gap, the file to change, and
+  # acceptance criteria. `built` is not reachable, because we cannot execute a change to a cluster we
+  # can only read, and a patch we cannot test implies a confidence we do not have.
+  eks_build: {}
+  # A managed capability closes it. /plan authors the artifact and runs it. Whether this requires
+  # moving the workload is the alternative's `requires_runtime_move`, NOT an assumption — most
+  # capabilities are callable from an EKS pod, which is the whole `adopt_components` case.
+  agentcore: { requires_alternative: true }
+  # Interim fix in their service now, managed capability later. The realistic answer for anything
+  # exploitable today whose managed replacement needs the runtime move: they cannot wait for a
+  # migration to stop a live vulnerability. Only the managed half is ever authored here.
+  both: { requires_alternative: true }
 
 outcomes:
   # adopt_components is the most common honest answer and is not a lesser result. assess_only —

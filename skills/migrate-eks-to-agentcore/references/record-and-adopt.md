@@ -54,6 +54,19 @@ suggestions:
     confidence: high | medium | low
     coexists_with: their existing runtime and every tool, unchanged
     assumes: [the field is honoured by the release they run — not yet verified]
+
+    # OPTIONAL, and its absence is a claim: there is no managed answer, so the only way to close
+    # this gap is in their own service. Omit it for a wrong system prompt or a wrong README.
+    # Present when there IS one, because survey 2 asks *where* and cannot be answered otherwise.
+    agentcore_alternative:
+      capability: policy                # a `closed_by` AgentCore member. Cedar, here
+      closes: partially
+      note: still no approval gate — Cedar constrains which tools, not who signs off
+      eks_build: a chart field plus a policy file they author and maintain
+      eks_you_own: the policy format, its rollout, and keeping it in step with the tool list
+      agentcore_config: a Cedar policy on the Gateway, LOG_ONLY then ENFORCE
+      agentcore_you_own: the policy content — the engine, evaluation and audit trail are managed
+      requires_runtime_move: false      # Policy is callable from an EKS pod. Only `runtime` is not
 ```
 
 Four rules, and each exists because its absence has produced a specific failure:
@@ -82,6 +95,9 @@ invisible without the check. Deliberate omission is fine — say so in `assessme
 
 ## Survey 2 — the decisions
 
+Two questions per gap, not one: **do you want it closed, and where.** The second is what decides
+whether we write code or write a change request, so it cannot be inferred.
+
 ```yaml
 decided_at: <iso8601>
 decided_with: <name or role>       # absent means no survey 2 happened, and /plan will refuse
@@ -89,6 +105,7 @@ decisions:
   - id: D-04
     suggestion: S-04
     choice: proceed | declined | deferred
+    via: eks_build | agentcore | both        # required on proceed — see below
     reason: <their words, not ours>          # required for declined and deferred
     revisit_when: <the condition>            # required for deferred
     residual_gaps: [AGENTSEC02/approval_gate]
@@ -96,6 +113,55 @@ decisions:
 outcome: migrate | migrate_partially | adopt_components | assess_only | stay | redesign_first
 outcome_note: <one line>
 ```
+
+### Put both paths on the page, or `via` is a coin toss
+
+**Ask `via` only where the suggestion carries an `agentcore_alternative`.** Where it does not — a
+system prompt that contradicts the data, a README with the wrong tool count — `eks_build` is the only
+truthful answer and asking would be theatre. On a real record that was 8 questions, not 22.
+
+Where there is a choice, show this. The customer cannot choose between two paths they cannot see,
+and a one-line "AgentCore provides this" is not a comparison:
+
+```
+AGENTSEC03 — inbound authentication is absent          [severity: high, exploitable today]
+
+  Build it yourself                      Use the managed capability
+  ─────────────────────────────          ──────────────────────────────────────
+  ~7 lines of JWT verification in        Identity: CUSTOM_JWT authorizer —
+  FastAPI, plus a NetworkPolicy          discoveryUrl and allowed audience
+  ~1 day                                 configuration only
+  You then own: JWKS caching, key        You then own: claim extraction
+  rotation, the middleware
+                                         Requires moving the workload: NO
+                                         — callable from your EKS pod today
+  Neither closes: authorization. A valid token still reaches all 6 tools
+  (AGENTSEC02 stays open either way)
+
+  → eks_build, agentcore, or both?
+```
+
+Three parts of that are load-bearing:
+
+- **What they still operate afterwards.** Usually the deciding fact, and the one a cost comparison
+  hides. Both paths validate a token; only one leaves somebody owning key rotation at 3am.
+- **Whether it requires moving the workload.** *Only `runtime` does.* Gateway, Policy, Identity,
+  Memory, Evaluations, Observability, Code Interpreter and Browser are callable from an EKS pod —
+  which is what the `adopt_components` outcome is for, and it is frequently the honest
+  recommendation. Saying "AgentCore gives you this" while omitting "after you migrate" is the version
+  of this conversation that dies in their architecture review.
+- **What neither path closes.** Already in `does_not_fix`; quote it rather than re-deriving, and do
+  not let the managed column absorb it.
+
+**`both` is not a hedge.** It is the right answer whenever something is exploitable today and its
+managed replacement needs the runtime move: nobody waits for a migration to close a live
+vulnerability. Only the managed half is ever authored — the interim fix is theirs.
+
+**Do not aggregate this into a migration pitch.** The migration case is the *sum* of these answers.
+Five gaps where they chose `agentcore` is a business case made of five capabilities they picked; the
+same five asserted up front is a pitch they have to accept or reject whole. And on a record where 21
+of 22 accepted suggestions had `requires_runtime_move: false`, the honest total was
+`adopt_components`, not `migrate`.
 
 **`deferred` is a first-class answer, not a soft no.** *"Not this quarter, revisit when we have a
 second tenant"* is the most common real response, and it used to collapse into `undecided`, which

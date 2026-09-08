@@ -1,7 +1,7 @@
 {
   "name": "build-agents-on-aws",
   "description": "Design, deploy, and migrate production-grade AI agents on AWS. Strands Agents SDK design patterns (prompt architecture, tool APIs, interventions, native context management, topology, evals), Bedrock AgentCore deployment (runtime, MCP Gateway with interceptors and inference targets, Identity 2LO/3LO, Cedar Policy, Agent Registry, Evaluations, Observability, CDK), and EKS-to-AgentCore migration assessment with measured cost modelling and per-component verdicts. Includes a tested, command-scaffolded template.",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "author": {
     "name": "cdanielsoh"
   },

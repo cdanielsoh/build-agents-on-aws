@@ -318,6 +318,45 @@ correct: there, most of the work *is* the gaps, and "no tool authorization exist
 instrumentation exists" are the items that matter, the second of which gates Gate 2 by construction.
 Write to new paths; never overwrite working files.
 
+### `via` decides whether you write a file at all
+
+**Author only what you can execute. Specify everything else.**
+
+| Decision's `via` | You produce | `plan_item` state reachable |
+|---|---|---|
+| `agentcore` | the artifact — entrypoint, CDK, policy, config — and you **run** it | `built` / `failing` |
+| `both` | the managed half only. The interim fix in their service is theirs | `built` / `failing` |
+| `eks_build` | **no files.** The gap, the exact file to change, and acceptance criteria | `planned` only |
+
+`validate` enforces both halves of this: an item whose decision is `via: eks_build` may carry no
+`artifacts`, and a `plan_item` receipt for one may not be `built` or `failing`. Running a change to
+their cluster is not something we did.
+
+**Why, concretely.** We have read-only access to their cluster and do not know their deployment
+pipeline. Observed on a real plan: it wrote `deployment-command-override.patch.yaml` and
+`networkpolicy.yaml` for a service deployed by a Jenkinsfile it never opened — untestable by
+construction, unappliable in practice, and presented with the same confidence as the code it had
+actually run. A patch you cannot test implies a confidence you do not have.
+
+For `eks_build`, write this instead, and it is more useful than a patch:
+
+```markdown
+### P-0.3 — bind session ownership to the verified caller  (D-02, via: eks_build)
+
+Finding    AGENTSEC03 — `session_id` is accepted verbatim from the caller  [r-0041]
+Change     derive it from (verified caller identity, conversation id); reject on mismatch in
+           both load and save
+Where      agent/serving/session_store.py — `DynamoDbSessionStore.load` / `.save`
+Accept     replaying another caller's session_id returns 403, not their conversation
+           an existing conversation still resumes for its own caller after 20 minutes idle
+Not fixed  the 23 already-stored items (TTL 24h, they age out); at-rest encryption is D-21
+Owner      theirs. We wrote no patch: we cannot run your test suite or your pipeline
+```
+
+Acceptance criteria are the deliverable, because they are what the customer verifies against — and
+unlike a manifest, they survive a different pipeline, a different chart, and a Helm-vs-Kustomize
+disagreement we were never going to resolve from outside.
+
 - **AgentCore entrypoint** — reuse their existing agent construction unchanged; the point is
   that only the surface differs. **That thesis fails for a multi-agent service**, and it fails
   quietly because it still holds for most of the components: when a supervisor delegates to
