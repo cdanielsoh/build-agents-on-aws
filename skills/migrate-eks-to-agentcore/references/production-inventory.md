@@ -41,7 +41,7 @@ lens_plan.py record --question AGENTSEC02 --component tool_allowlist \
 lens_plan.py record --remedy AGENTSEC02 --component tool_allowlist \
     --closed-by platform_config --remedy-verified false --requires-runtime-move false \
     --tag read:cluster --evidence "chart/values.yaml:210 authz.serverSide unset" \
-    --source "helm get values kagent"
+    --source "helm get values <release>"
 ```
 
 | Field | Answers | Note |
