@@ -72,7 +72,7 @@ lens_plan.py record --question AGENTSEC02 --component tool_allowlist \
 [lens-graph.yaml](lens-graph.yaml) and [record-schema.yaml](record-schema.yaml) — **an invalid
 receipt is not written**, because an invalid receipt is worse than none: it looks like evidence.
 
-`record-schema.yaml` is the authoritative field list. The eight kinds and what each is for:
+`record-schema.yaml` is the authoritative field list. The nine kinds and what each is for:
 
 | Kind | Records | Note |
 |---|---|---|
@@ -84,6 +84,44 @@ receipt is not written**, because an invalid receipt is worse than none: it look
 | `topology` | one field of the topology read | `--component` gives a multi-agent service a per-edge answer, and a hybrid design two values for one field |
 | `artifact` | something you needed and could not read | `blocks:` is then **computed** from the questions that cite it, not remembered |
 | `context` | `engagement`, `code_ownership` | decides whether a remedy is actionable at all |
+| `plan_item` | **written by `/plan`, not `/assess`** — did a generated artifact actually run? | `built`, `failing`, `unverifiable`, `planned`. See below |
+
+### The one kind `/plan` writes
+
+`plan_item` exists because `/plan`'s highest-value step — run what you generated, then mutation-test
+it — produced only prose. "Verified", "synth passes", "tests green" sat in `plan.md` where no tool
+could read them and nothing distinguished them from a sentence somebody typed. An independent review
+of one generated plan found a test presented as a working pre-deploy gate that could never pass, and
+three of six posture assertions in another that **could not fail** — all three passing, all three
+cited as evidence for decisions.
+
+| State | Means | Requires |
+|---|---|---|
+| `built` | generated, executed, passed | `--verified-by` |
+| `failing` | generated, executed, **failed** | `--verified-by` |
+| `unverifiable` | generated, could not run it here | `--blocked-by` |
+| `planned` | deliberately not executed — cutover, or theirs to run | — |
+
+`--verified-by` is rejected on the last two, so a receipt cannot say both "nothing was run" and name
+a command. `--mutation-tested` records whether you broke the thing the test guards and watched it
+fail; `validate` notes every `built` that lacks it, and `manifest` prints the qualification beside
+the claim rather than dropping it in a summary.
+
+Two consequences worth stating, because they are the point:
+
+- **`plan/items.yml` may not carry a status field.** `verified`, `built`, `status`, `state`,
+  `tested`, `passing` are rejected by `validate`. It is written by the same pass that would make the
+  claim, so a status there restates what its author hoped. Same reasoning as [there being no stored
+  `plan:` block](#the-six-artifacts-one-writer-each) — remove the ability to assert rather than
+  adding a check for lying.
+- **`MANIFEST.md` is generated** (`lens_plan.py manifest`), with its verified column projected from
+  these receipts and its counts derived. Hand-assembly is how a plan once skipped a `severity: high`
+  finding while claiming thirteen closed: nothing in its artifact list was wrong, the list simply
+  ended.
+
+Verification shares the assessment's log rather than getting its own file, because staleness is only
+computable when a plan item's verification and the observations it rests on carry comparable
+timestamps.
 
 **`--source` is required whenever the tag asserts an observation** (`measured:*`, `read:*`,
 `verified`). A receipt that claims an observation while recording no way to repeat it is the defect

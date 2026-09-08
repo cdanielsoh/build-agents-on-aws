@@ -1,6 +1,6 @@
 {
   "name": "build-agents-on-aws",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Design and deploy production-grade AI agents on AWS with Strands Agents SDK and Amazon Bedrock AgentCore.",
   "author": {
     "name": "cdanielsoh",

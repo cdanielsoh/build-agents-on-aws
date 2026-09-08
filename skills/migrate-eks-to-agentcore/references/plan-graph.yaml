@@ -1,0 +1,150 @@
+# The phases of a migration plan, as a dependency graph.
+#
+# Why this is data and not prose: the plan command carried every one of these preconditions as a
+# bold warning inside 450 lines of method — "name the mirroring point explicitly", "do not start
+# Phase 3 without a numeric rollback trigger", "Phase 1 compares against the EKS service, so
+# confirm the EKS service starts". Those are edges. We already established on the assessment side
+# that prose cannot enforce a precondition: a step that did not apply got performed anyway, and a
+# step that did apply got silently skipped. There is no reason the same text would behave
+# differently on the plan side, and the one real plan produced confirms it did not.
+#
+# `lens_plan.py phases` resolves this against the record and the survey, and prints each phase as
+# executable / degraded / blocked / not_applicable. It is computed on demand and never stored —
+# same rule as the assessment walk, for the same reason: a stored copy of the intended plan can be
+# both stale and asserted done.
+#
+# needs:       predicates that must ALL be true. Names must exist in `predicates` below.
+# after:       phases that must come first, because this one's rollback path depends on theirs.
+# only_if:     an outcome condition. When false the phase is `not_applicable`, not a gap.
+# unmet:       what to do when a predicate is false — never "write the phase anyway".
+# degraded_if: predicates whose UNKNOWN value does not block, but must be stated as an assumption
+#              with its consequence. This is the state prose had no vocabulary for, so an
+#              unverifiable phase read identically to a verified one.
+
+# Every predicate is computed from the record — no free text, and nothing a model asserts directly.
+# `lens_plan.py selfcheck` asserts this list and the implementations in lens_plan.py agree, because
+# a name here with no implementation would silently resolve as unknown and degrade every phase
+# that needs it.
+predicates:
+  record_decided:      "decisions.yml has `decided_with` — somebody is recorded as having chosen"
+  has_proceed:         "at least one decision with choice: proceed"
+  gates_evaluated:     "every gate_id has a receipt and none is `unknown`"
+  liftable:            "gate liftable_unit is not `not_a_liftable_unit`"
+  build_reproducible:  "AGENTSUS02 is present or platform_provides — dependencies are pinned"
+  deployment_exists:   "access.yml deployment_exists — there is something to compare against"
+  measurable:          "all four Gate 2 measurements have receipts: cpu, wall, peak memory, turns"
+  golden_set_exists:   "AGENTOPS06 is present or platform_provides"
+  tool_inventory_known: "AGENTOPS04 has any state other than unknown"
+  mirroring_point:     "topology mirroring_point is not `none` — somewhere to mirror from exists"
+  can_invoke:          "access.yml invocation_permitted"
+  can_load:            "access.yml load_generation_permitted"
+  owner_named:         "access.yml product_owner_reachable — somebody can pull a rollback trigger"
+  single_component:    "topology detected is single_turn, or exactly one component appears"
+
+# ── The migration track. Selected when the customer's outcome commits to a platform move. ──────
+phases:
+
+  P0:
+    title: fixes worth making regardless
+    only_if: {outcome: [migrate, migrate_partially, adopt_components, assess_only]}
+    needs: [record_decided, has_proceed]
+    unmet: "with no `decided_with`, every verdict in the record is the assessor's own — stop and
+            run survey 2 rather than planning from assessment.yml's recommended_outcome"
+    # Ordering inside P0 is not free: until the build is reproducible no later phase is a
+    # controlled experiment, so a pinning item sorts first among P0 items rather than gating P0.
+    degraded_if: [build_reproducible]
+
+  P1:
+    title: parallel runtime, no traffic
+    only_if: {outcome: [migrate, migrate_partially, adopt_components]}
+    after: [P0]
+    needs: [gates_evaluated, liftable, deployment_exists]
+    unmet: "an unevaluated gate is not a passed gate. If gates_evaluated is false, do not plan past
+            P0 — name what would resolve it and resolve it. If liftable is false the unit is the
+            platform rather than the agent, and the components needing no runtime move ARE the
+            recommendation"
+    # Three caveats on the phase rather than blockers. Without a golden set there is nothing to
+    # compare against, so the exit criterion becomes spot-checked rather than demonstrated. Without
+    # invocation permission the comparison is real but somebody else runs it — P1's exit criterion
+    # is answers compared against the existing service, and producing those answers means sending
+    # it requests. With more than one component, "fully reversible" holds only for the ones nothing
+    # else calls, so migrate leaves first.
+    degraded_if: [golden_set_exists, can_invoke, single_component]
+
+  P2:
+    title: shadow traffic
+    only_if: {outcome: [migrate, migrate_partially]}
+    after: [P1]
+    needs: [mirroring_point, tool_inventory_known, can_load]
+    unmet: "mirroring_point `none` means Phase 2 has nowhere to execute — say that rather than
+            writing a phase nobody can run. `caller` means it relocates into whatever calls this,
+            possibly another team's repo. Without the tool inventory you cannot say which tools a
+            mirrored request reaches, and discarding the response does not discard the side effects"
+    degraded_if: [measurable]
+
+  P3:
+    title: cutover
+    only_if: {outcome: [migrate, migrate_partially]}
+    after: [P2]
+    needs: [measurable, owner_named]
+    unmet: "a phase with no abort condition should not start. A numeric rollback trigger needs
+            current numbers to set a threshold against, and a named person to pull it — if either
+            is missing, say plainly that P3 cannot begin until they are"
+
+  P4:
+    title: decommission
+    only_if: {outcome: [migrate, migrate_partially]}
+    after: [P3]
+    needs: [owner_named]
+    unmet: "the observation window is a date somebody agrees to, not a duration you choose"
+
+# ── The redesign track. Commits to no platform, and exists to resolve unknowns. ────────────────
+# An unknown gate does NOT block these: R0-R5 are what resolve it. The migration phases block
+# because they commit to a platform an unevaluated gate might rule out.
+
+  R0:
+    title: recover missing artifacts and get the record decided
+    only_if: {outcome: [redesign_first, stay]}
+    needs: []
+    unmet: ""
+
+  R1:
+    title: close what is exploitable today
+    only_if: {outcome: [redesign_first, stay]}
+    after: [R0]
+    needs: [record_decided]
+    unmet: "an exploitable finding still needs a proceed decision before it becomes a plan item —
+            fix_first says when, not whether"
+    degraded_if: [build_reproducible]
+
+  R2:
+    title: make it measurable
+    only_if: {outcome: [redesign_first, stay]}
+    after: [R1]
+    needs: [deployment_exists]
+    unmet: "with no running deployment Gate 2 is unavailable, full stop. R2 becomes: get one
+            deployed, or declare the numbers permanently out of reach"
+
+  R3:
+    title: make it verifiable
+    only_if: {outcome: [redesign_first, stay]}
+    after: [R2]
+    needs: [measurable]
+    unmet: "a golden set drawn from imagination tests the author's guesses. R3 needs R2's logged
+            turns, which is why it comes second"
+
+  R4:
+    title: forward-compatible changes only
+    only_if: {outcome: [redesign_first, stay]}
+    after: [R1]
+    needs: []
+    unmet: ""
+
+  R5:
+    title: re-assess
+    only_if: {outcome: [redesign_first, stay]}
+    after: [R3, R4]
+    needs: []
+    unmet: ""
+    # R5 is the point of the whole track: redesign_first usually means the record could not see
+    # enough to recommend anything, so the deliverable is a better record, not a migration.

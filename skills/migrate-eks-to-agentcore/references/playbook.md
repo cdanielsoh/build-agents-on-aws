@@ -5,6 +5,38 @@ the customer can stop after any one and still be better off. That property is wh
 the plan safe to start, and it removes the all-or-nothing framing that stalls these
 decisions.
 
+## Which of these phases you may actually write
+
+**Resolve before you sequence.** Every phase below has preconditions, and they used to live here
+as prose — which is the arrangement that lost steps on the assessment side until the check graph
+existed.
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lens_plan.py" phases
+```
+
+[plan-graph.yaml](plan-graph.yaml) holds the phases, their `after` edges and fourteen predicates
+computed from the record. Each phase resolves to one of four states, and the distinction between
+the middle two is the one worth keeping:
+
+| State | Write |
+|---|---|
+| `executable` | the phase, normally |
+| `degraded` | the phase, with each unknown named as an assumption, its consequence if wrong, and who can settle it |
+| `blocked` | **not a phase.** A section on what is unavailable and why |
+| `not_applicable` | nothing — the outcome selected the other track |
+
+**Unknown is not false.** A phase degraded because nobody answered S3 is a different claim from one
+blocked because the mirroring point is `none`. Collapsing them is the same conflation that made
+`unreachable` read as `absent` on the assessment side, and it manufactures blockers.
+
+`blocked` cascades through `after`, so "do not plan past Phase 0 while a gate is `unknown`" is
+enforced rather than remembered.
+
+**Two tracks, selected by the record's `outcome`.** Phases 0–4 below are the migration track. Under
+`redesign_first` or `stay` they all resolve `not_applicable` and [the R-track](#the-redesign-track--r0r5)
+is the plan instead.
+
 ## Phase 0 — fixes worth making regardless
 
 Frame it exactly that way. If the migration is cancelled at the end of Phase 0, the
@@ -127,6 +159,47 @@ serving layer, probes, `preStop` hooks, node pools.
 **Keep:** the knowledge store, IAM roles still referenced, the cluster itself if other
 workloads use it, and enough of the old deployment manifests to reconstruct the service
 if a latent problem appears months later.
+
+## The redesign track — R0–R5
+
+Selected when the record's `outcome` is `redesign_first` or `stay`. **Everything above assumes a
+migration; none of it applies here.** There is no parallel runtime, no shadow traffic, no cutover
+and no CDK — and Phase 0 is not a substitute, because it is a pre-migration checklist rather than a
+plan that stands alone.
+
+The reason this track exists: `redesign_first` usually means the record could not see enough to
+recommend anything. So **the deliverable is a better record, not a migration.** Say that plainly —
+the customer is buying a decision, and this plan defers it on purpose.
+
+| | Phase | Exit criterion |
+|---|---|---|
+| **R0** | Recover missing artifacts, get the record decided | every `missing_artifacts` entry resolved or declared permanent; `decisions.yml` exists with a `decided_with` |
+| **R1** | Close what is exploitable today | every `severity: high` triage entry with a `proceed` decision has a merged patch |
+| **R2** | Make it measurable | the four Gate 2 numbers land in telemetry, from the running service |
+| **R3** | Make it verifiable | a golden set drawn from **R2's logged turns**, wired as a CI gate |
+| **R4** | Forward-compatible changes only | things that improve the service now *and* the migration later — ARM64, an arm64 NodePool, structured logging |
+| **R5** | Re-assess | re-run the assessment with R2's measurements and the Gate 3 answers |
+
+Three ordering facts that are not preferences:
+
+- **Pin dependencies in R1, before anything else in it.** Until the build is reproducible no later
+  phase is a controlled experiment and no comparison proves anything. It is a prerequisite, not an
+  improvement, which is why `build_reproducible` degrades R1 rather than gating it — you can start,
+  but the plan should say the first item makes the rest meaningful.
+- **R3 depends on R2, not the reverse.** A golden set drawn from imagination tests the author's
+  guesses; one drawn from a week of real logged turns tests the service.
+- **An `unknown` gate does not block any R-phase.** The migration phases block on unevaluated gates
+  because they commit to a platform the gate might rule out. R0–R5 commit to nothing and exist
+  precisely to resolve unknowns, so plan all of them — the unknowns belong in R0's recovery list and
+  R5's inputs.
+
+**`StopRuntimeSession` has nowhere to live here.** A redesign produces no runtime to call it on.
+Record it as an R5 input rather than scaffolding a call into a file nothing invokes.
+
+Each R-phase still needs the same fields as a numbered phase: goal, steps, verification, rollback,
+owner, and what remains `[open]`. Reversibility will not separate them — order by **exploitable
+today → makes it measurable → makes it verifiable → what a later move would need** — and say which
+axis you used, because a reader will assume reversibility.
 
 ## Rollback summary
 

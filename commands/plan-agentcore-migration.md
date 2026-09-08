@@ -29,6 +29,17 @@ and say to run `/assess-agentcore-migration` first — do not reconstruct it fro
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lens_plan.py" validate
 ```
 
+**This is a gate, not a diagnostic. If `validate` reports errors, fix the record or stop — do not
+plan around them.** The failure that motivates this is not hypothetical: on the one real record
+available, `decisions.yml` was 1169 lines and **did not parse as YAML** — a key at indent 2
+followed by continuation lines at indent 4 with no colon, so `yaml.safe_load` raised at line 1164.
+Nothing noticed, because nothing had to read it. A model reads a broken YAML file as prose
+perfectly happily, produces a confident plan, and the machine-readable half of the record is
+decorative. That same run also skipped `items.yml` and `MANIFEST.md` entirely — the two files whose
+whole job is catching omission.
+
+So: parse before you read. If `decisions.yml` will not load, say which line and stop.
+
 **Read everything. Act only on `decisions.yml`.**
 
 | Input | Use |
@@ -48,21 +59,30 @@ every "verdict" in the record is the assessor's own. `assessment.yml`'s `recomme
 a substitute — it sits in the record looking authoritative, which is exactly why planning from it
 quietly reintroduces things the customer would have declined. Say what is missing and stop.
 
-**Two invariants, enforced rather than described.** `validate` fails on both, so a plan that violates
-them cannot pass the `Stop` hook:
+**Three invariants, enforced rather than described.** `validate` fails on all three, so a plan that
+violates them cannot pass the `Stop` hook:
 
 - **A plan item with no decision id is invalid.** Write `plan/items.yml` alongside `plan.md`, one
   entry per item, each naming the decision it comes from. That is also what generates
   `MANIFEST.md`'s reverse index.
 - **A suggestion with no finding ids is invalid** — so anything you plan is already grounded, and
   citing the suggestion is enough.
+- **`items.yml` may not carry a verification status.** `verified`, `built`, `status`, `state`,
+  `tested` and `passing` are rejected outright. Verification lives in a `plan_item` receipt and
+  nowhere else — see Step 4.
 
 ```yaml
-# .agentcore-migration/plan/items.yml
+# .agentcore-migration/plan/items.yml — intent only. No status field; see Step 4
 items:
   - { id: P-0.1, phase: 0, decision: D-01, title: set authz.serverSide=true,
       artifacts: [scaffold/chart/values.yaml] }
 ```
+
+**Why the ban rather than a check.** `items.yml` is written by the same pass that would claim the
+verification, so a status field in it can only ever restate what its author hoped — there is nothing
+to contradict it. This is the same defect that made the assessment's old hand-written `plan:` block
+worthless (`done` on all 15 nodes, unverifiable), and it was fixed the same way: remove the ability
+to assert, rather than adding a check for lying.
 
 **Staleness is now computation, not judgement.** `validate` reports when `findings.yml` is older than
 the newest receipt, and when a decision rests on a receipt that has since been superseded. Read both
@@ -78,7 +98,7 @@ do not treat anything other than `pass` as fatal:
 | `trivial_fix` | a Phase 0 line item (e.g. an amd64 pin). **Not** a refusal |
 | `needs_redesign` | plan the redesign as its own phase, and cost it before Phase 1 |
 | `fail` | refuse **only if the remedy is a platform capability the customer cannot supply.** If the remedy is a rebuild, a pin or a config change, it is a `trivial_fix` mis-recorded — see below |
-| `unknown`, resolvable by you | **do not plan past Phase 0.** An unevaluated gate is not a passed gate — name what would resolve it, and resolve it |
+| `unknown`, resolvable by you | **do not plan past Phase 0.** An unevaluated gate is not a passed gate — name what would resolve it, and resolve it. `phases` enforces this: any `unknown` gate makes `gates_evaluated` false, which blocks P1 and cascades |
 | `unknown`, needs a Gate 3 answer | plan on, with the gate as a named assumption and a stated consequence if it is wrong. Quota headroom needs their request volume; nothing in a repo answers it, so blocking here would block every repo-only assessment |
 
 **Read `fail` against the remedy, not the word.** Records written before `trivial_fix` existed —
@@ -124,10 +144,42 @@ rationale, a critique of the assessment itself, notes hung off a finding. Observ
 sharpest planning input was a comment inside another field. Skipping what the template does not name
 loses exactly the parts the assessor thought worth writing by hand.
 
-## Step 2 — Order the work by reversibility
+## Step 2 — Resolve which phases are available, then order them
 
-Cheap and reversible first. Each phase must be independently valuable, so the customer can stop
-after any of them and still be better off.
+**Run this before writing any phase:**
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lens_plan.py" phases
+```
+
+It resolves [plan-graph.yaml](../skills/migrate-eks-to-agentcore/references/plan-graph.yaml) against
+the record and the survey, and prints each phase in one of four states. The preconditions below used
+to be bold warnings inside this file, which is the arrangement we already know does not hold — the
+assessment side lost steps exactly that way until the check graph existed, and there is no reason
+the same prose behaves differently here.
+
+| State | What to write |
+|---|---|
+| `executable` | the phase, normally |
+| `degraded` | the phase, **with each unknown named as an assumption and its consequence if wrong** — plus who can settle it |
+| `blocked` | not a phase. A section saying what is unavailable and why. The `unmet` text is the argument |
+| `not_applicable` | nothing. The outcome selected a different track |
+
+`degraded` is the state prose had no vocabulary for, and its absence is why an unverifiable phase
+read identically to a verified one. **Unknown is not false.** A phase degraded because nobody
+answered S3 is not the same claim as one blocked because the mirroring point is `none`, and
+collapsing the two is the conflation that turned `unreachable` into `absent` on the assessment side.
+
+Two things the resolver decides that were previously left to memory:
+
+- **`blocked` cascades.** P2 cannot read executable when P1 is blocked, so "do not plan past Phase 0
+  while a gate is `unknown`" is enforced rather than remembered.
+- **The track is selected by `outcome`.** Under `redesign_first` or `stay`, P0–P4 resolve
+  `not_applicable` and R0–R5 become the plan. Use `--outcome` to see the other track before
+  committing to one.
+
+Then order what remains. Cheap and reversible first. Each phase must be independently valuable, so
+the customer can stop after any of them and still be better off.
 
 **Reversibility only discriminates once infrastructure is involved, so carry a tie-break.** On a
 single-service plan every phase is `git revert` plus the previous image tag — minutes, no data
@@ -188,6 +240,11 @@ ClusterIP service with no ingress and no mesh — typical of internal tools — 
 mirror from. Then Phase 2 relocates into the *caller*, which may be a different repo and a
 different team. Say that rather than writing a phase nobody can execute.
 
+This is now a recorded fact rather than a thing to remember: the answer is a `topology`
+receipt on `mirroring_point` (`ingress`, `service_mesh`, `sidecar`, `caller`, `none`, `unknown`),
+and `phases` blocks P2 when it is `none`. Until that field existed the command asked for the answer
+and the record had nowhere to put it, so the phase got written regardless.
+
 **Phase 3 — cutover.** Customer-driven, on their sign-off.
 
 **With more than one component, cutover has an order and a steady state, and both need writing
@@ -201,8 +258,10 @@ it passes through.** Two rules that make per-component rollback actually indepen
   be reverted without stranding anything.
 
 **Do not start Phase 3 without a numeric rollback trigger.** Error rate, p95, cost/day, and the
-name of who pulls it. If those are `open` in the record, say plainly that Phase 3 cannot begin
-until they are set — a phase with no abort condition should not start.
+name of who pulls it. A threshold needs current numbers to be a threshold *against*, which is why
+`phases` gates P3 on `measurable` and `owner_named` — if either is false the phase resolves
+`blocked`, and the honest output is that Phase 3 cannot begin until they are set. A phase with no
+abort condition should not start.
 
 Scale in-flight advice to `work_unit`. If a unit of work is one request, there are no in-flight
 *conversations* to drain and the pin-existing-sessions advice is a non-question — drop it
@@ -213,35 +272,24 @@ exactly what gets deleted and what must be kept.
 
 ## Step 2b — If the recommendation is `redesign_first`, these are the phases
 
-Everything in Step 2 assumes a migration. Under `redesign_first` there is no parallel runtime,
-no shadow traffic, no cutover and no CDK — and the playbook's Phase 0 is a pre-migration
-checklist, not a plan that stands alone. Use R0–R5, then re-enter Step 2 at Phase 1 only if R5
-says so:
+`phases` selects this track for you: under `redesign_first` or `stay`, P0–P4 resolve
+`not_applicable` and R0–R5 are what remains. Everything in Step 2 assumes a migration, and the
+playbook's Phase 0 is not a substitute — it is a pre-migration checklist, not a plan that stands
+alone.
 
-| | Phase | Exit criterion |
-|---|---|---|
-| **R0** | Recover missing artifacts and get the record decided | every `findings.yml` `missing_artifacts` entry resolved or declared permanent; `decisions.yml` exists with a `decided_with` |
-| **R1** | Close what is exploitable today | each `triage` entry at `severity: high` with a `proceed` decision has a merged patch. Pin dependencies **first** — until the build is reproducible, no later phase is a controlled experiment |
-| **R2** | Make it measurable | the four Gate 2 numbers land in telemetry, from the running service |
-| **R3** | Make it verifiable | a golden set drawn from R2's logged turns, wired as a CI gate |
-| **R4** | Forward-compatible changes only | things that improve the service now *and* the migration later — ARM64, an arm64 NodePool, structured logging |
-| **R5** | Re-assess | re-run `/assess-agentcore-migration` with R2's measurements and the Gate 3 answers |
+**The six R-phases, their exit criteria and their ordering constraints are in
+[playbook.md](../skills/migrate-eks-to-agentcore/references/playbook.md#the-redesign-track--r0r5).**
+Read them there rather than from a copy here; the table lived in this file only, which meant the
+sequencing reference documented one track and the command documented two.
 
-R5 is the point of the whole structure: `redesign_first` usually means the record could not see
-enough to recommend anything, so the plan's deliverable is a **better record**, not a migration.
-Say that plainly — the customer is buying a decision, and this plan defers it on purpose.
+The two things to carry into the plan document itself:
 
-**An `unknown` gate does not block the R-phases.** Step 1's "do not plan past Phase 0" governs
-the *migration* phases, because those commit to a platform an unevaluated gate might rule out.
-R0–R5 commit to nothing and exist precisely to resolve unknowns, so plan all of them. `unknown`
-gates belong in R0's recovery list and in R5's re-assessment inputs.
-
-**`StopRuntimeSession` has nowhere to live here.** Step 3 says implement it as code, but a
-redesign produces no runtime to call it on. Record it as an R5 input — one of the things the
-re-assessment must decide — rather than scaffolding a call into a file nothing invokes.
-
-Each R-phase still needs the Step 2 fields: goal, steps, verification, rollback, owner, `[open]`.
-Order them with Step 2's tie-break, since reversibility will not separate them.
+- **The deliverable is a better record, not a migration.** `redesign_first` usually means the
+  record could not see enough to recommend anything, so R5 — re-assess — is the point of the whole
+  structure. Say that plainly; the customer is buying a decision and this plan defers it on purpose.
+- **`StopRuntimeSession` has nowhere to live here.** Step 3 says implement it as code, but a
+  redesign produces no runtime to call it on. Record it as an R5 input rather than scaffolding a
+  call into a file nothing invokes.
 
 ## Step 3 — Generate scaffolding
 
@@ -329,10 +377,16 @@ are comparable across engagements:
 
 ```
 <out>/plan.md              the phased plan
-<out>/items.yml            one entry per plan item, each naming its decision. `validate` reads this
+<out>/items.yml            one entry per plan item, each naming its decision. Intent only —
+                          no status field. `validate` reads this
 <out>/scaffold/            generated files, mirroring the target repo layout
-<out>/scaffold/MANIFEST.md both indexes, below
+<out>/scaffold/MANIFEST.md both indexes, below. GENERATED by `lens_plan.py manifest`
 ```
+
+Verification does not appear in this tree at all. It is appended to
+`.agentcore-migration/receipts.jsonl` as `plan_item` receipts — one log, shared with the
+assessment, because staleness is only computable when the plan's verification and the observations
+it rests on carry comparable timestamps.
 
 **`plan.md` needs two sections that are not phases, and leaving them out is what made earlier plans
 read as a funnel:**
@@ -364,20 +418,73 @@ So require both directions, and make the second one exhaustive:
 
 Every row of the second table needs one of the two. "Not addressed" is a fine answer —
 "blocked on Q1", "the customer's working file", "no build definition exists in this repo" — and
-writing it turns a gap in the plan into a decision the customer can overrule. Then count: if the
-plan claims *n* findings closed, that number must be derived from this table, not from the
-record's severity totals. `plan/items.yml` is the machine-readable half of the same thing, and
-`validate` reads it: generate this table from that file rather than assembling it by hand.
+writing it turns a gap in the plan into a decision the customer can overrule.
+
+**Do not assemble these tables by hand — `lens_plan.py manifest` emits both**, from `items.yml`,
+`decisions.yml` and the `plan_item` receipts. Hand-assembly is how the omission survived: the
+counts have to be *derived* from the second table to catch a list that simply ended, and a human
+copying rows derives nothing. The generator prints
+`n_addressed/n_proceed` and flags any `proceed` decision with no item, so the blank
+`Or why not` cell is the thing you fill in rather than the thing you never notice. If the plan
+claims *n* findings closed, take *n* from the generator's output, not from the record's severity
+totals.
 
 `MANIFEST.md` replaces any interactive diff review: in a non-interactive run there is no
 "before" to diff against, so the auditable artifact is a list of what was written and why.
 
-### Run what you generated, before you write the plan around it
+### Run what you generated, before you write the plan around it — and record that you did
 
 **Non-negotiable, and the single highest-value step here.** An independent review of one
 generated plan found seven defects that this one action would have caught, including a
 `StopRuntimeSession` call whose wrong parameter name discarded every answer the service
 computed, and a test presented in the plan as a working pre-deploy gate that could never pass.
+
+**Every item gets a `plan_item` receipt, and the receipt is the only place verification is
+recorded.** Until this existed, this step produced prose — "verified", "tested", "synth passes" —
+sitting in `plan.md` where no tool could read it and nothing could distinguish it from a sentence
+someone typed. That is precisely the assertion-that-cannot-fail defect the rest of this section
+spends a page warning about in the customer's tests, so the instrument was committing the fault it
+diagnoses.
+
+Four states, and choosing honestly among them is the point:
+
+```bash
+R="python3 ${CLAUDE_PLUGIN_ROOT}/scripts/lens_plan.py record"
+
+# ran it, it passed, and you broke it once to confirm the test can fail
+$R --plan-item P-0.1 --state built --tag verified \
+   --verified-by "pytest -q tests/test_authz.py" --mutation-tested true \
+   --artifacts "scaffold/authz.py,scaffold/tests/test_authz.py" \
+   --source "pytest -q" --evidence "3 passed; reverting the call site fails 3/3"
+
+# ran it and it FAILED. A receipt of its own, not a silent retry — the failure is the finding
+$R --plan-item P-1.2 --state failing --tag verified --verified-by "cdk synth --all" \
+   --source "cdk synth" --evidence "no default StorageClass on EKS Auto Mode"
+
+# generated, could not run it here. Needs a blocker; not the same claim as built
+$R --plan-item P-0.2 --state unverifiable --tag open --blocked-by S2 \
+   --evidence "no egress in this environment to resolve wheels"
+
+# deliberately not executed — a cutover step, or the customer's to run
+$R --plan-item P-3.1 --state planned --tag open --evidence "cutover is theirs, on sign-off"
+```
+
+`--verified-by` is required for `built` and `failing`, rejected for the other two; `unverifiable`
+requires `--blocked-by`. So "I verified it" cannot be written without naming the command, and "I
+couldn't" cannot be written without naming why. `validate` then reports any item with no receipt,
+any `built` that was not mutation-tested, and every `failing` — as notes, because an incomplete plan
+is honest and punishing it would only teach people to write receipts for work they did not do.
+
+**`MANIFEST.md` is generated from those receipts, never hand-written:**
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lens_plan.py" manifest
+```
+
+Its verified column is projected from the receipts, so a row cannot claim verification that was
+never recorded, and its counts are derived rather than asserted. A `built` item with no
+mutation-test is printed as `built, ran, passed (not mutation-tested)` — the qualification travels
+with the claim instead of being dropped in the summary.
 
 | Artifact | Minimum check |
 |---|---|
@@ -419,7 +526,11 @@ agent loads at construction, producing a runtime that reaches READY and 500s on 
 the exact failure the rest of the plan is written to prevent. Synthesize, list the staged
 context, and confirm every non-`.py` file the code opens is in it.
 
-**Phase 1 compares against the EKS service, so confirm the EKS service starts.** If the image
+**Phase 1 compares against the EKS service, so confirm the EKS service starts.** `phases` gates P1
+on `deployment_exists` for this reason, and degrades it on `can_invoke` — producing the answers to
+compare against means sending the existing service requests, which is S4 and may well be refused.
+If it is, P1 still belongs in the plan; the comparison is just somebody else's to run, and the plan
+should say so rather than implying we did it. If the image
 cannot be built or the entrypoint does not exist — common, and itself a finding — Phase 1 has no
 baseline and its exit criterion is unmeetable. Say that instead of writing the comparison step.
 
