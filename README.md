@@ -52,7 +52,7 @@ skills, MCP servers, templates, and workflow procedures.
 |-------|---------------|
 | **strands-agent-design** | Design well-architected agents with Strands Agents SDK — prompt architecture for cache efficiency, tool API design, security patterns, context window management, agent topology selection, meta-tooling, and evaluation with Strands Evals SDK. |
 | **deploy-on-agentcore** | Deploy agents on Bedrock AgentCore — runtime containers, MCP Gateway (tool/HTTP/inference targets, REQUEST+RESPONSE interceptors, rate limits), Identity (2LO/3LO outbound auth), Cedar Policy authorization, Agent Registry, managed Evaluations, Observability, AgentCore Memory, streaming protocol, and CDK infrastructure. |
-| **migrate-eks-to-agentcore** | Assess and execute a migration of an existing agentic service from EKS to AgentCore Runtime — session topology classification, EKS-vs-AgentCore cost comparison, per-component migrate/keep/delete verdicts, and a phased playbook with rollback. Platform detail is not duplicated here; it points into `deploy-on-agentcore`. |
+| **migrate-eks-to-agentcore** | Assess an existing agentic service against the AWS Well-Architected Agentic AI Lens and say which AgentCore components close each gap — session topology classification, measured EKS-vs-AgentCore cost comparison, and a phased playbook with rollback. The walk is logged as an auditable receipt trail; the assessor proposes changes and the customer accepts, declines or defers each one, and the plan is generated from their decisions alone. Platform detail is not duplicated here; it points into `deploy-on-agentcore`. |
 
 Skills activate automatically when relevant context is detected — mention Strands SDK, agent design, AgentCore, MCP Gateway, CDK, or related topics.
 
@@ -61,8 +61,8 @@ Skills activate automatically when relevant context is detected — mention Stra
 | Workflow | Claude Code | Codex | Kiro CLI | What it does |
 |----------|-------------|-------|----------|--------------|
 | New agent | `/new-agent [dir]` | `$new-agent [dir]` | `/new-agent [dir]` | Scaffold a runnable Strands + AgentCore project from `templates/` |
-| Assess a migration | `/assess-agentcore-migration [repo]` | `$assess-agentcore-migration [repo]` | `/assess-agentcore-migration [repo]` | Assess an EKS-hosted agent for migration; emits an editable decision record |
-| Plan a migration | `/plan-agentcore-migration` | `$plan-agentcore-migration` | `/plan-agentcore-migration` | Turn that record into a phased plan plus scaffolding. Makes no live changes |
+| Assess a migration | `/assess-agentcore-migration [repo]` | `$assess-agentcore-migration [repo]` | `/assess-agentcore-migration [repo]` | Walk the 41 Lens questions, log every observation as a receipt, then propose grouped changes for the customer to decide on |
+| Plan a migration | `/plan-agentcore-migration` | `$plan-agentcore-migration` | `/plan-agentcore-migration` | Turn their decisions into a phased plan plus scaffolding. Acts only on decisions; makes no live changes |
 
 ## How the Skills Relate
 
@@ -80,8 +80,22 @@ Testing with Evals ───────────────────► 
               migrate-eks-to-agentcore
               (how to get there from what you already run)
                           │
-        assess ──► decide ──► plan ──► then deploy-on-agentcore builds it
+        survey access ──► walk ──► propose ──► they decide ──► plan
+                                                        │
+                                    then deploy-on-agentcore builds it
 ```
+
+### Hooks
+
+`migrate-eks-to-agentcore` ships three hooks. **All three no-op silently unless the working
+directory contains an `.agentcore-migration/` directory**, so they are invisible in every other
+repository.
+
+| Event | Does |
+|---|---|
+| `SessionStart` | prints where the assessment's walk stands, so a resumed session does not restart from nothing |
+| `PreToolUse` (Bash) | blocks sending requests to the customer's agent, or generating load against it, unless the recorded access survey permits it — and blocks commands that would mutate their infrastructure |
+| `Stop` | checks referential integrity across the record. Never blocks on an incomplete walk: "we were not permitted to look" is a recordable state, not an error |
 
 Start with **strands-agent-design** when building a new agent from scratch. Move to **deploy-on-agentcore** when you're ready to deploy. Use **migrate-eks-to-agentcore** when an agent already runs somewhere else and the question is whether — and which parts — to move.
 

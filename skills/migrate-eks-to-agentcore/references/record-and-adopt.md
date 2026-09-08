@@ -1,4 +1,4 @@
-# Node K — write the record and the adoption path
+# Node K — propose, then let the human decide
 
 Needs node G. This is where the assessment becomes something the customer can act on, and where the
 positioning is load-bearing: **the assessment is the product.** A customer who learns that their tool
@@ -8,6 +8,107 @@ move a workload.
 
 For each gap the useful question is not *"should you migrate?"* but **"which component closes this,
 and does it require moving your runtime?"** Usually it does not.
+
+## You do not author the verdicts
+
+The record's editability was supposed to be what made the customer's choices binding rather than
+advisory. It was not: the assessor wrote the verdicts and the adoption path unilaterally, and the
+customer edited afterwards if they noticed.
+
+**You produce suggestions. The human chooses. The record holds the choices.** Which gives the
+instrument a symmetry that is the point rather than a nicety:
+
+> **Survey 1 gates what we may look at. Survey 2 gates what we may change.**
+
+Two files, and the boundary between them is the whole mechanism:
+
+- **`suggestions.yml`** — yours. Grouped, grounded proposals: *"based on what I found, this is the
+  change, here is what it buys, here is what it does not fix."*
+- **`decisions.yml`** — theirs. `proceed` / `declined` / `deferred`, with the reason captured when
+  it is given.
+
+`/plan-agentcore-migration` reads everything and **acts only on decisions.**
+
+## Suggestions: grouped, grounded, and honest
+
+The 41 questions are the **evidence unit**. The **action unit** is coarser — one NetworkPolicy
+touches AGENTSEC02, AGENTPERF07 and part of AGENTSEC01; one session-isolation field closes both a
+confidentiality and a correctness finding. That translation used to happen invisibly, in the
+assessor's head.
+
+```yaml
+suggestions:
+  - id: S-04
+    # Rule 2, made structural: if you cannot write this as ONE change, it is two suggestions.
+    change: Set authz.serverSide=true on the Agent chart and write the tool policy it reads
+    closed_by: platform_config          # non-AgentCore answers first, always
+    requires_runtime_move: false
+    closes: [AGENTSEC02/tool_allowlist, AGENTPERF07]   # finding ids. Empty is invalid.
+    grounded_in: [r-0007, r-0008]                      # receipt ids. Empty is invalid.
+    buys: tool authorization stops living inside the process a prompt injection reaches
+    does_not_fix: the approval gate, which has no chart field at all — that is S-05
+    cost:
+      effort: one values change plus a policy file; a day, plus a LOG_ONLY rollout
+      one_off: none | <usd> | open
+      recurring: none | <usd/month> | open
+    confidence: high | medium | low
+    coexists_with: their existing runtime and every tool, unchanged
+    assumes: [the field is honoured by the release they run — not yet verified]
+```
+
+Four rules, and each exists because its absence has produced a specific failure:
+
+1. **A suggestion is not a benefit claim.** It carries which receipts ground it, what it costs,
+   **what it does not fix**, and confidence. Without those it is a pitch with citations — the exact
+   overclaiming this instrument exists to prevent. `validate` reports a suggestion missing
+   `does_not_fix` as incomplete.
+2. **A group exists only if one change closes every member.** Two changes means two suggestions,
+   however related they feel. Without this rule grouping becomes *packaging* — bundling a weak item
+   with strong ones to get it approved.
+3. **Grouping must not swallow dissent.** The decision attaches to the group, but per-question state
+   survives. *"No to this bundle; AGENTSEC02 remains an open gap"* has to be expressible, which is
+   what `residual_gaps` on the decision is for.
+4. **"No to everything" is a success state.** `assess_only`. The findings are the deliverable. Say
+   so, so the flow does not read as a funnel.
+
+**Ordering: no-runtime-move first, free before paid.** Everything with
+`requires_runtime_move: false` comes before anything needing a replatform, because it is what they
+can do this quarter. That sort is mechanical; every other judgement in the file is yours.
+
+**Grounding is structural, not a habit.** `closes` and `grounded_in` must both be non-empty and must
+resolve, or `validate` fails. And `validate` reports the reverse: a finding that needs action and
+appears in **no** suggestion. That is the gap a model under context pressure creates, and it is
+invisible without the check. Deliberate omission is fine — say so in `assessment.yml`'s `triage`.
+
+## Survey 2 — the decisions
+
+```yaml
+decided_at: <iso8601>
+decided_with: <name or role>       # absent means no survey 2 happened, and /plan will refuse
+decisions:
+  - id: D-04
+    suggestion: S-04
+    choice: proceed | declined | deferred
+    reason: <their words, not ours>          # required for declined and deferred
+    revisit_when: <the condition>            # required for deferred
+    residual_gaps: [AGENTSEC02/approval_gate]
+    stated_by: <name or role>
+outcome: migrate | migrate_partially | adopt_components | assess_only | stay | redesign_first
+outcome_note: <one line>
+```
+
+**`deferred` is a first-class answer, not a soft no.** *"Not this quarter, revisit when we have a
+second tenant"* is the most common real response, and it used to collapse into `undecided`, which
+reads as nobody asked. `revisit_when` takes a **condition**, not a date, unless they gave a date.
+
+**There is deliberately no `undecided` value.** An undecided suggestion has *no entry*, and
+`validate` reports it as undecided by absence. That is what stops a column of `undecided` reading as
+"we asked and they never replied" on an engagement where nobody was ever asked.
+
+**A factual disagreement is not a decision — it is a new receipt.** If the customer says a finding
+is wrong, record `stated:customer` and regenerate. That is why there is no separate `dissent` block
+any more: facts go to receipts, choices go to decisions, and neither has two homes.
+See [receipts.md](receipts.md).
 
 ## Which adoptions need a runtime move
 
@@ -110,10 +211,14 @@ A customer who hears only the migration case does not trust the migration case.
 **Never frame the result as abandoning what they built.** If they run a platform — theirs or a third
 party's — the recommendation is almost never "stop using it." It is "keep it, and put these two
 components where the gaps are." An assessment that concludes with an ultimatum gets discounted
-entirely, along with the findings that were correct. If `coexists_with` is empty for every entry in
-the adoption path, re-read it.
+entirely, along with the findings that were correct. If `coexists_with` is empty for every
+suggestion, re-read them.
 
 ## Confidence — two axes, not one
+
+Both live in `assessment.yml`, alongside `recommended_outcome`, `keep_as_is`, `triage` and
+`economics` — the file that holds your judgement, as distinct from `findings.yml` which holds only
+what was observed.
 
 Earlier versions had a single `confidence` keyed to measurement completeness. That is a
 **cost**-confidence rubric, and applying it to the recommendation produced actively harmful output: a
