@@ -6,7 +6,7 @@ Tools shape agent behavior more than prompts do. Design tools for progressive di
 
 1. [Progressive Disclosure (Two-Layer Access)](#progressive-disclosure)
 2. [Tool Results as Dynamic Prompts](#tool-results-as-dynamic-prompts)
-3. [Closure Factory Pattern](#closure-factory-pattern)
+3. [Closure Factory Pattern](#toolcontext-and-closure-factory-patterns)
 4. [Anti-Patterns](#anti-patterns)
 5. [Human-in-the-Loop (Interventions)](#human-in-the-loop-interventions)
 6. [When NOT to Use Progressive Disclosure](#when-not-to-use-progressive-disclosure)

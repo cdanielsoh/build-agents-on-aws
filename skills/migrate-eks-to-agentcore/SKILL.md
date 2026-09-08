@@ -97,7 +97,8 @@ plugin. Figures here show *which levers matter*, never the customer's number.
         survey 2  the customer decides (proceed / decline / defer-with-condition)
                     ↓
 /plan-agentcore-migration              →  phased plan + scaffolding
-        acts only on decisions; no live changes to the running system
+        resolve which phases are even available, then act only on decisions
+        no live changes to the running system; every artifact it runs gets a receipt
 ```
 
 **Two surveys, and the symmetry is the point: survey 1 gates what we may look at, survey 2 gates
@@ -164,7 +165,7 @@ each node points at exactly one file below.
 |---|---|
 | [survey-and-plan.md](references/survey-and-plan.md) | **Start here.** The six access questions and the check graph they produce |
 | [lens-graph.yaml](references/lens-graph.yaml) | The 15 nodes and the 41 questions as one graph: what each needs, what it depends on, the substitute when access is missing. Resolve with `scripts/lens_plan.py` |
-| [receipts.md](references/receipts.md) | **Recording anything.** The six artifacts, the eight receipt kinds, and how a correction works |
+| [receipts.md](references/receipts.md) | **Recording anything.** The six artifacts, the nine receipt kinds, and how a correction works |
 | [record-schema.yaml](references/record-schema.yaml) | The receipt vocabulary — every legal value. `record` validates against it, so an invalid receipt is not written |
 | [evidence.md](references/evidence.md) | Tagging any claim. The nine tags and the source hierarchy |
 | [read-the-shape.md](references/read-the-shape.md) | Node A — coded, declarative or managed, and whether the repo is what runs |
@@ -181,7 +182,8 @@ each node points at exactly one file below.
 | [topologies.md](references/topologies.md) | Classifying their session design; and how many runtimes for a multi-agent service |
 | [constraints.md](references/constraints.md) | Quotas, hard limits, and the honest counter-list |
 | [cost-model.md](references/cost-model.md) | Any cost conversation. The levers, the crossover |
-| [playbook.md](references/playbook.md) | Sequencing, parallel run, rollback |
+| [plan-graph.yaml](references/plan-graph.yaml) | The plan's phases and their preconditions, as a graph. Resolve with `scripts/lens_plan.py phases` before writing any phase |
+| [playbook.md](references/playbook.md) | Sequencing, parallel run, rollback — both tracks, and what each phase state permits you to write |
 | [provenance.md](references/provenance.md) | What this plugin actually measured, and what to verify before asserting |
 
 ## Related skills

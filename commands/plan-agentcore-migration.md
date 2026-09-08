@@ -272,35 +272,24 @@ exactly what gets deleted and what must be kept.
 
 ## Step 2b — If the recommendation is `redesign_first`, these are the phases
 
-Everything in Step 2 assumes a migration. Under `redesign_first` there is no parallel runtime,
-no shadow traffic, no cutover and no CDK — and the playbook's Phase 0 is a pre-migration
-checklist, not a plan that stands alone. Use R0–R5, then re-enter Step 2 at Phase 1 only if R5
-says so:
+`phases` selects this track for you: under `redesign_first` or `stay`, P0–P4 resolve
+`not_applicable` and R0–R5 are what remains. Everything in Step 2 assumes a migration, and the
+playbook's Phase 0 is not a substitute — it is a pre-migration checklist, not a plan that stands
+alone.
 
-| | Phase | Exit criterion |
-|---|---|---|
-| **R0** | Recover missing artifacts and get the record decided | every `findings.yml` `missing_artifacts` entry resolved or declared permanent; `decisions.yml` exists with a `decided_with` |
-| **R1** | Close what is exploitable today | each `triage` entry at `severity: high` with a `proceed` decision has a merged patch. Pin dependencies **first** — until the build is reproducible, no later phase is a controlled experiment |
-| **R2** | Make it measurable | the four Gate 2 numbers land in telemetry, from the running service |
-| **R3** | Make it verifiable | a golden set drawn from R2's logged turns, wired as a CI gate |
-| **R4** | Forward-compatible changes only | things that improve the service now *and* the migration later — ARM64, an arm64 NodePool, structured logging |
-| **R5** | Re-assess | re-run `/assess-agentcore-migration` with R2's measurements and the Gate 3 answers |
+**The six R-phases, their exit criteria and their ordering constraints are in
+[playbook.md](../skills/migrate-eks-to-agentcore/references/playbook.md#the-redesign-track--r0r5).**
+Read them there rather than from a copy here; the table lived in this file only, which meant the
+sequencing reference documented one track and the command documented two.
 
-R5 is the point of the whole structure: `redesign_first` usually means the record could not see
-enough to recommend anything, so the plan's deliverable is a **better record**, not a migration.
-Say that plainly — the customer is buying a decision, and this plan defers it on purpose.
+The two things to carry into the plan document itself:
 
-**An `unknown` gate does not block the R-phases.** Step 1's "do not plan past Phase 0" governs
-the *migration* phases, because those commit to a platform an unevaluated gate might rule out.
-R0–R5 commit to nothing and exist precisely to resolve unknowns, so plan all of them. `unknown`
-gates belong in R0's recovery list and in R5's re-assessment inputs.
-
-**`StopRuntimeSession` has nowhere to live here.** Step 3 says implement it as code, but a
-redesign produces no runtime to call it on. Record it as an R5 input — one of the things the
-re-assessment must decide — rather than scaffolding a call into a file nothing invokes.
-
-Each R-phase still needs the Step 2 fields: goal, steps, verification, rollback, owner, `[open]`.
-Order them with Step 2's tie-break, since reversibility will not separate them.
+- **The deliverable is a better record, not a migration.** `redesign_first` usually means the
+  record could not see enough to recommend anything, so R5 — re-assess — is the point of the whole
+  structure. Say that plainly; the customer is buying a decision and this plan defers it on purpose.
+- **`StopRuntimeSession` has nowhere to live here.** Step 3 says implement it as code, but a
+  redesign produces no runtime to call it on. Record it as an R5 input rather than scaffolding a
+  call into a file nothing invokes.
 
 ## Step 3 — Generate scaffolding
 

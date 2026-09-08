@@ -15,7 +15,7 @@ the Gateway's MCP tool manifest**.
 3. [Writing Policies](#writing-policies)
 4. [Cedar Limitations That Will Bite You](#cedar-limitations)
 5. [Guardrails in Policy](#guardrails-in-policy)
-6. [The Two LOG_ONLY Controls](#the-two-log-only-controls)
+6. [The Two LOG_ONLY Controls](#the-two-log_only-controls)
 7. [Rollout Workflow](#rollout-workflow)
 8. [Validation Findings](#validation-findings)
 9. [Policy Generation from Natural Language](#policy-generation)
