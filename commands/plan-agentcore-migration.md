@@ -332,6 +332,15 @@ Write to new paths; never overwrite working files.
 `artifacts`, and a `plan_item` receipt for one may not be `built` or `failing`. Running a change to
 their cluster is not something we did.
 
+**The right-hand column says *reachable*, not *required*, and the asymmetry is deliberate.**
+`planned` stays legal for an `agentcore` item — a cutover step is theirs to run on sign-off (the
+`P-3.1` example below), and an item can legitimately share a file that a sibling item already
+executed. Banning `planned` there would reject both. What `validate` notes instead is the narrower
+thing that actually matters: **an artifact listed in `items.yml` that no `built`/`failing` receipt
+reports running.** Coverage is per *artifact*, not per item, so a file executed under a sibling
+counts. If you wrote a file and did not run it, that is a fine outcome — say so in `plan.md` at that
+step, which is all the note asks for.
+
 **Why, concretely.** We have read-only access to their cluster and do not know their deployment
 pipeline. Observed on a real plan: it wrote `deployment-command-override.patch.yaml` and
 `networkpolicy.yaml` for a service deployed by a Jenkinsfile it never opened — untestable by

@@ -179,6 +179,13 @@ measurement_fields:
   # supersession example in receipts.md corrects.
   peak_memory_gb:              gb
   turns_per_conversation:      count
+  # How long a user may go quiet mid-conversation and still expect it intact. This SETS
+  # idleRuntimeSessionTimeout; it is not a storage question. It used to be asked as "can a user be
+  # away longer than the idle timeout", which fixed the timeout as a premise and made the answer a
+  # choice of backend — so the number the timeout needs was thrown away at record time and then
+  # reappeared as an open question in the plan. Stated by the product owner, or measured as the p90
+  # inter-turn gap once real traffic exists; say which via tag.
+  max_expected_turn_gap_seconds: seconds
   # Endpoint cost is conditional on the VPC's egress design, not on the platform.
   vpc_has_internet_egress:     bool
   existing_nat_gateways:       count
@@ -204,6 +211,19 @@ topology_fields:
   # a different repo and a different team. `none` is common — a ClusterIP with no ingress and no
   # mesh has nowhere to mirror from at all.
   mirroring_point:          [ingress, service_mesh, sidecar, caller, none, unknown]
+  # Where conversation history lives, which is a different question from how long a session may idle
+  # (max_expected_turn_gap_seconds). There is deliberately no `microvm_only`: AgentCore hard-kills
+  # containers with no SIGTERM, no atexit and no lifespan teardown, so at session end there is no
+  # opportunity to persist anything anywhere. Idle expiry, the maxLifetime ceiling, a version update
+  # mid-conversation and scale-down all end a session, and none is detectable from inside the
+  # container. "The microVM holds it" is therefore not a storage design, it is unmitigable loss —
+  # which is why the same hard-kill fact is what forces AgentCoreMemorySessionManager to
+  # batch_size=1. A record cannot both mandate persisting every turn and permit persisting none.
+  # `not_applicable` is the honest value where no multi-turn history exists at all: work_unit of
+  # job/document, or detected: single_turn.
+  # Both stores must be keyed on something that OUTLIVES the session — a conversation id, not a
+  # session id — or resumption is impossible while the field still reads external_store.
+  history_store:            [external_store, agentcore_memory, not_applicable]
 
 context_fields:
   engagement:     [customer, internal_reference, upstream_project]

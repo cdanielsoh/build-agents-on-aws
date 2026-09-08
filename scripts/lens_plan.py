@@ -192,7 +192,9 @@ def main() -> int:
     c.add_argument("--note")
     c.add_argument("--component", help="separates rows that share a practice, or edges of a "
                                        "multi-agent topology")
-    c.add_argument("--blocked-by", dest="blocked_by", help="survey or node id, for an unreachable node")
+    c.add_argument("--blocked-by", dest="blocked_by",
+                   help="what stopped you: a survey id (S2), check-graph node (F1), question id, "
+                        "access key or access class. Validated — free text is rejected")
     c.add_argument("--substitute-used", dest="substitute_used")
     c.add_argument("--closed-by", dest="closed_by")
     c.add_argument("--remedy-verified", dest="remedy_verified")

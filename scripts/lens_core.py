@@ -138,6 +138,19 @@ def valid_subjects(kind: str, graph: dict, schema: dict) -> set[str] | None:
     }[kind]
 
 
+def blocked_by_vocabulary(graph: dict) -> set[str]:
+    """Everything `blocked_by` may legally name — the union of what a blocker can be.
+
+    Survey ids are the canonical form the commands' examples use (`--blocked-by S2`); the rest are
+    admitted because `resolve` itself reports blockers as node ids and access classes, so a receipt
+    copying what `resolve` printed must validate.
+    """
+    survey = {label.split()[0] for _key, label in SURVEY_PROMPTS}
+    access_keys = {key for key, _label in SURVEY_PROMPTS}
+    access_classes = set(graph.get("access_classes", {})) | {c for cs in GRANTS.values() for c in cs}
+    return survey | access_keys | access_classes | set(graph.get("nodes", {})) | set(graph["questions"])
+
+
 def coerce(text: str):
     """`record` takes strings; findings.yml should carry numbers and booleans as themselves."""
     low = text.strip().lower()
@@ -228,6 +241,23 @@ def validate_receipt(rec: dict, graph: dict, schema: dict, known_ids: set[str]) 
         if state in ("unverifiable", "planned") and rec.get("verified_by"):
             errs.append(f"`{state}` takes no --verified-by — it says nothing was run. Use `built` "
                         "or `failing` if something was")
+
+    # `blocked_by` names what stopped you, so it has to be a thing the record can resolve. Presence
+    # was checked above for plan items and validity was checked nowhere, so `--blocked-by NOPE` was
+    # accepted — a real probe on a real run, which then had to be superseded. Free text here is worse
+    # than a missing field: it reads as a citation and resolves to nothing. Applies to every kind,
+    # not just plan items, because an unreachable question or node carries a blocker too.
+    if "blocked_by" in rec:
+        legal = blocked_by_vocabulary(graph)
+        for token in ([rec["blocked_by"]] if isinstance(rec["blocked_by"], str)
+                      else list(rec["blocked_by"] or [])):
+            # `AGENTSEC03/inbound_auth` is how a component-scoped question is named everywhere else,
+            # so accept it here rather than making the blocker the one place it is spelled differently.
+            if str(token).split("/")[0] not in legal:
+                errs.append(
+                    f"blocked_by=`{token}` resolves to nothing. Give a survey id (S1, S2b, S4 …), "
+                    "a check-graph node (A, F1, K …), a Lens question id, an access key "
+                    "(`invocation_permitted` …) or an access class (`behaviour`, `human` …)")
 
     if "supersedes" in rec:
         if rec["supersedes"] not in known_ids:

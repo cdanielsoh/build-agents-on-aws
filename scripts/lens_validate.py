@@ -41,8 +41,17 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
     # ── referential errors. These, and only these, fail. ──
     for r in receipts:
         errs = validate_receipt(r, graph, schema, ids - {r.get("id")})
+        # A superseded receipt has already been corrected the one way an append-only log allows, so
+        # its defects are history rather than open problems. Keeping them fatal would punish exactly
+        # the behaviour supersession exists to encourage, and — because the log may not be edited —
+        # would leave the record permanently unable to pass. Observed when a new rule made a probe
+        # receipt from an earlier run retroactively invalid, minutes after that run had correctly
+        # superseded it. Still reported, so a chain of corrections stays visible.
+        dest = notes if r.get("id") in superseded_by else errors
         for e in errs:
-            errors.append(f"receipts.jsonl {r.get('id')}: {e}")
+            dest.append(f"receipts.jsonl {r.get('id')}: {e}"
+                        + (" (superseded — recorded for history, not blocking)"
+                           if dest is notes else ""))
 
     for f in findings.values():
         if not f.get("receipts"):
@@ -266,6 +275,26 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
         if last.get("state") == "failing":
             notes.append(f"plan item {iid} is `failing` ({last.get('verified_by')}). A plan whose "
                          "first concrete action fails is worse than no plan — fix or restate it")
+
+    # An artifact nobody ran, rather than an item whose state is `planned`. The state is the wrong
+    # thing to police: `planned` is correct for a cutover step that is theirs to run, and for an item
+    # whose file was executed under a sibling item that shares it — so banning it for `via: agentcore`
+    # would reject both legitimate cases, including this command's own documented example. What
+    # actually matters is narrower and checkable: a file we wrote and never executed. Anything a
+    # `built`/`failing` receipt names counts as covered, whichever item recorded it.
+    def _paths(v) -> list[str]:
+        # Same coercion as `manifest`: a string here would compare character by character and report
+        # every letter as an unrun artifact.
+        return [p.strip() for p in v.split(",") if p.strip()] if isinstance(v, str) else list(v or [])
+
+    ran = {art for rs in pi.values() for r in rs if r.get("state") in ("built", "failing")
+           for art in _paths(r.get("artifacts"))}
+    for item in plan_doc.get("items", []):
+        for art in _paths(item.get("artifacts")):
+            if art not in ran:
+                notes.append(f"plan item {item.get('id')} lists `{art}` and no plan_item receipt "
+                             "reports running it. Either run it and record the receipt, or say in "
+                             "plan.md at that step that it was written unexecuted")
 
     # A scaffold with no items.yml is a referential error, not a coverage gap. Files were written and
     # nothing says which decision authorised them — the reverse index cannot run, so an artifact

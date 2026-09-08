@@ -115,6 +115,12 @@ Size the timeout from the p90 gap between turns, not from a round number. That m
 question "how long should the tail be", which has an answer per workload, rather than
 "stop or reuse", which does not.
 
+Record that gap as `max_expected_turn_gap_seconds` — stated by the product owner before there is
+traffic, measured from logs once there is. It is a **separate** question from where history lives
+(`history_store`), and fusing the two is a documented failure: asking "can they be away longer than
+the idle timeout" treats this dial as fixed and turns the answer into a choice of database. See
+[production-inventory.md](production-inventory.md#these-are-two-questions-and-fusing-them-is-how-the-reasoning-goes-wrong).
+
 So for a **single-turn** service — where every request is its own conversation — the "tuned"
 configuration this file recommends means **paying microVM start on every request**. Measured
 start overhead was ~1.96s `[measured:reference, n=3]`, against turns of a few seconds. That is

@@ -167,9 +167,6 @@ def cmd_record(a, graph: dict, schema: dict) -> int:
                 rec[field] = coerce(v) if field in (
                     "remedy_verified", "requires_runtime_move", "is_true_high_water_mark",
                     "mutation_tested") else v
-        # A comma-separated list is what a shell can produce; a list is what MANIFEST.md needs.
-        if isinstance(rec.get("artifacts"), str):
-            rec["artifacts"] = [p.strip() for p in rec["artifacts"].split(",") if p.strip()]
         if a.value is not None:
             # `coerce` turns "none" into Python None, which is right for a free number or a boolean
             # and wrong for an enum whose legal value is the STRING "none". flush_cadence already
@@ -187,6 +184,13 @@ def cmd_record(a, graph: dict, schema: dict) -> int:
     for rec in pending:
         rec.pop("id", None)
         rec.pop("at", None)
+        # A comma-separated string is what a shell can produce; a list is what MANIFEST.md needs.
+        # This normalization lives here rather than in the single-record branch below because
+        # `--batch` bypasses that branch entirely: a batched line carrying `"artifacts": "a.py,b.py"`
+        # went in unsplit, and `manifest` then iterated the string character by character, so the
+        # artifact column came out one letter per row. Observed on a real plan run.
+        if isinstance(rec.get("artifacts"), str):
+            rec["artifacts"] = [p.strip() for p in rec["artifacts"].split(",") if p.strip()]
         rid = next_id(receipts + stamped)
         # id and `at` are the script's, never the model's. That is what makes staleness
         # computable, and what makes a batch written at write-up time visible as a cluster of

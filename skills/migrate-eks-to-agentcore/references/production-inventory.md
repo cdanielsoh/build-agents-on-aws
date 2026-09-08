@@ -383,8 +383,8 @@ history:
 
 1. **Delete the session store** — the microVM holds history
 2. **Call `StopRuntimeSession`** at end-of-conversation — worth ~12× on memory
-3. **Skip AgentCore Memory** — 55% of the default bill, and unnecessary if nobody resumes an
-   old conversation
+3. **Skip AgentCore Memory** — 55% of the default bill `[measured:reference]`, and unnecessary if
+   nobody resumes an old conversation
 
 Apply all three and history exists **only** in a microVM that you are now explicitly
 terminating, with no store to recover from. The idle timeout does the same thing on its own
@@ -395,28 +395,66 @@ The evidence does not support "delete" at full strength either: what was measure
 retains state across three requests. It says nothing about the 8-hour session ceiling, idle
 expiry, concurrent turns in one session, or a runtime version update mid-conversation.
 
-**So ask this, not the softer version:** *can a user be away longer than the idle timeout and
-still expect their conversation intact?* "Does a returning user resume a prior conversation?"
-gets a "no" from teams who nonetheless need durable state across a 20-minute coffee break —
-the ordinary chat-UI case.
+### These are two questions, and fusing them is how the reasoning goes wrong
 
-Record the answer explicitly as `history_durability_across_idle`:
+Both runs of this instrument on one real service got the storage decision from the idle answer,
+and both were wrong to. The questions are independent:
+
+| Question | Answer is | Records as | Decides |
+|---|---|---|---|
+| How long may a user go quiet mid-conversation and still expect it intact? | a **duration** | `max_expected_turn_gap_seconds` | `idleRuntimeSessionTimeout` |
+| Where does history live? | a **store** | `history_store` | whether you keep their store, adopt Memory, or have no history at all |
+
+The old single field asked *"can a user be away longer than the idle timeout?"* and made the
+answer a choice of backend. That fixes the timeout as a **premise** when the timeout is the thing
+being decided — `idleRuntimeSessionTimeout` is an optional knob on
+`lifecycleConfiguration` `[verified]`, not a constant — and it discards the number, because a
+customer answers in minutes and the enum offered only storage. Observed consequence: one run
+recorded "20 minutes" as `agentcore_memory or external_store`, the 20 vanished, and the plan then
+listed the inter-turn gap distribution as an open question blocking the very value the customer
+had already given. Ask both, record both.
+
+Asking the duration question against a fixed timeout also makes it undiscriminating. A team told
+"3 minutes is enough" has said nothing, because 3 minutes is under the 900s default and every
+option satisfies it — and one run read exactly that as evidence *for* microVM-only.
+
+### `history_store`
 
 | Value | When | Consequence |
 |---|---|---|
-| `microvm_only` | truly ephemeral, single-sitting conversations | cheapest; history gone at idle expiry or `StopRuntimeSession` |
-| `agentcore_memory` | users return, or sessions outlive the idle timeout | pay per event, every turn |
-| `external_store` | durability needed and Memory is not wanted | you kept topology A's store; do not claim migration deleted it |
+| `external_store` | multi-turn history exists and you are keeping their store | cheapest for most; do not claim the migration deleted it |
+| `agentcore_memory` | multi-turn history exists and a managed store is wanted | pay per event, every turn — `batch_size=1` is forced |
+| `not_applicable` | no multi-turn history at all: `work_unit` of `job`/`document`, or `detected: single_turn` | nothing to persist, so nothing to decide |
 
-Do not set `microvm_only` unless the customer has confirmed in writing that losing history at
-idle expiry is acceptable. `cost-and-billing.md` frames the idle-timeout trade as "a cold start
-for a user who returns mid-conversation" — with the store deleted it is not a cold start, it is
-data loss.
+**There is no `microvm_only`, and it is not an omission.** AgentCore hard-kills containers —
+no SIGTERM, no `atexit`, no lifespan teardown, and the `yield` block never
+runs `[verified]`. So at session end there is no opportunity to write anything anywhere: this is
+not a policy that accepts losing *old* conversations, it is the *current* conversation destroyed
+with no flush path. Four things end a session — idle expiry, the `maxLifetime` ceiling, a runtime
+version update mid-conversation, and scale-down — and none is detectable in advance from inside
+the container. A user twelve turns in when the ceiling hits loses twelve turns.
+
+The instrument cannot hold both positions: the same hard-kill fact is why
+`AgentCoreMemorySessionManager` is forced to `batch_size=1` — *"the only safe option"* — so a
+reference that mandates persisting every turn cannot also offer persisting none. An earlier version
+of this section gated `microvm_only` behind written customer consent, which was the wrong shape:
+a signature does not make unmitigable loss mitigable, it just moves the blame.
+
+**Both stores must be keyed on something that outlives the session.** A store keyed on session id
+satisfies `external_store` and still cannot resume anything, because the session is the thing that
+died. Key on a conversation id, derived together with the caller identity — which is the same
+mechanism that closes session-ownership, so it is one fix and not two. → `AGENTSEC01`
 
 **Short-term disappears; long-term is a build-or-adopt decision with a price.** But note the
-qualifier above: short-term disappears *only* if you accept the durability consequence.
+qualifier above: short-term disappears *only* if history lives outside the microVM.
 `AgentCoreMemorySessionManager` is forced to `batch_size=1`, so events bill every turn — in one
-measured config, **55% of the bill**.
+measured config, **55% of the bill** `[measured:reference]`. That figure is from another
+engagement: quote it as a shape, never as this customer's number.
+
+Long-term memory is a separate decision again, and it is the one above this section: preferences,
+semantic recall and rolling summaries are what Memory's *strategies* buy. Without strategies,
+Memory is an event log — functionally what their DynamoDB table already is — so `agentcore_memory`
+here is a choice of vendor, not a new capability.
 
 Namespaces accept only `{actorId}`, `{sessionId}`, `{memoryStrategyId}` — not `{tenantId}`.
 Scope with a literal prefix or encode the tenant into the actor id. → `agentcore-memory.md`,
