@@ -83,8 +83,8 @@ changed after a runtime is created.
 | **Image architecture** — amd64-only dependency | On microVMs: a rebuild (cheap, do it first). On Instances: **not an issue**, x86_64 is supported | `runtime-and-sessions.md` |
 | **Image size** over the cap | Slim the image. A minimal interpreted-language agent measured 482 MB `[measured:reference]` — but **any CUDA/ML base image blows the 2 GB cap on its base layer alone** (`nvidia/cuda:12.4-cudnn-runtime` is ~2.1 GB compressed). "Rarely binding" is false for exactly the workloads that need GPU. A compiled-language agent is typically far smaller and will not bind here | `runtime-and-sessions.md` |
 | **GPU** / local inference | **Not** a blocker — use the **Instances** compute type (supported families above). Blocker only if you require microVMs for another reason | `runtime-and-sessions.md` |
-| **Sidecars** required | Restructure, or stay | `runtime-and-sessions.md` |
-| **Protocol** not HTTP / MCP / A2A / AG-UI | Front it with HTTP, or stay | `runtime-and-sessions.md` |
+| **Sidecars** required | Restructure, or stay | `[reasoned]` — see the note below |
+| **Protocol** not HTTP / MCP / A2A / AG-UI | Front it with HTTP, or stay | `[docs]` — see the note below |
 | **Concurrency** past the session or creation-rate caps | Quota increase. **Lead time, not a wall** — raise it during assessment | `runtime-and-sessions.md` |
 | **Region** absent | Probe with `list-agent-runtimes`; published lists have been stale | `runtime-and-sessions.md` |
 | **Inbound auth: in-app JWT validation** | **Like-for-like, the cheapest case.** The platform authorizer replaces ~7 lines of verification. Claim *extraction* stays yours | `identity.md` |
@@ -92,6 +92,25 @@ changed after a runtime is created.
 | **Inbound auth: NONE today** | **Not breaking — additive greenfield.** Simultaneously the highest-severity *current* gap | `identity.md` |
 | **Inbound auth: proxy-terminated mTLS** (Envoy/Istio sidecar) | **Loss of a compliance control.** Runtime offers SigV4 or CUSTOM_JWT only; there is no mTLS equivalent, and the sidecar's outbound policy goes too. A security-team decision, not an engineering one | `identity.md` |
 | **VPC-resident knowledge store** | Not a blocker, but forces VPC mode and a full endpoint set | `vpc-and-network-isolation.md` |
+
+**Protocol and sidecar rows — their sources, because both were previously cited to a file that
+does not contain them.**
+
+Four inbound protocols each have their own published contract `[docs]`, so the protocol row is
+a real gate and the list is complete as written:
+[HTTP](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-http-protocol-contract.html) ·
+[MCP](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-mcp-protocol-contract.html) ·
+[A2A](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-a2a-protocol-contract.html) ·
+[AG-UI](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-agui-protocol-contract.html).
+A2A additionally has a
+[deployment guide](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-a2a.html).
+Cite these rather than a `deploy-on-agentcore` file — that skill documents the runtime and
+session model, not the protocol contracts.
+
+The **sidecar** row is `[reasoned]`, not `[docs]`: no published document states that sidecars are
+unsupported. The basis is structural — a runtime's container configuration takes one image URI
+and no command override — so a second process has nowhere to be declared. State it at that
+strength. If a customer's decision turns on it, that is a proof-of-concept, not a citation.
 
 ## The four that people get wrong
 

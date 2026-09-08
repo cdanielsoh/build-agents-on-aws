@@ -15,15 +15,17 @@
 #             `unknown` with the blocker, never `absent`.
 # only_if:    a shape condition. When false the honest state is `not_applicable`, not a gap.
 
+# Each access class is exercised by exactly one reference file, named in the comment beside it.
+# The check-graph node that owns that file is in survey-and-plan.md's node table.
 access_classes:
-  source:      "application source, at the revision deployed (survey S1)"
-  cluster:     "control-plane read — resource specs, schemas, RBAC, env (S2)"
-  logs:        "container logs and status conditions (S2). Read-only, no consent needed"
-  aws:         "live AWS API reads in THEIR account (S2 + account check)"
-  behaviour:   "sending requests to the agent (S4). Consent-gated; expect no"
-  load:        "generating concurrent load (S5). Consent-gated, more intrusive than behaviour"
-  telemetry:   "their existing metrics/traces with real traffic in them (S3)"
-  human:       "someone who can answer product and process questions (S6)"
+  source:      "application source, at the revision deployed (survey S1)"        # read-the-repo.md    (A1)
+  cluster:     "control-plane read — resource specs, schemas, RBAC, env (S2)"    # read-the-cluster.md (A2)
+  logs:        "container logs and status conditions (S2). Read-only, no consent needed"  # read-the-cluster.md (B)
+  aws:         "live AWS API reads in THEIR account (S2 + account check)"        # probe-aws.md        (C)
+  behaviour:   "sending requests to the agent (S4). Consent-gated; expect no"    # invoke-the-agent.md (F)
+  load:        "generating concurrent load (S5). Consent-gated, more intrusive than behaviour"  # concurrency-sweep.md (I)
+  telemetry:   "their existing metrics/traces with real traffic in them (S3)"    # measure.md          (H)
+  human:       "someone who can answer product and process questions (S6)"       # ask.md              (J)
 
 questions:
 

@@ -55,8 +55,9 @@ Two reasons this matters more than it sounds:
   platforms and degrades exactly where the customer is most typical.
 
 Where the deployed software is third-party open source, the legitimate move is **not** its
-marketing or docs: pin its *published source to the release they run* (see `assessment.md`) and
-cite `file:line`. AgentCore capability facts you need are already verified in
+marketing or docs: pin its *published source to the release they run* (see
+`references/evidence.md`, level 5 of the source hierarchy) and cite `file:line`. AgentCore
+capability facts you need are already verified in
 `deploy-on-agentcore/references/` and carry `[docs]` tags — read those rather than re-researching
 them, and if one is missing or looks wrong, record it `[open]` and say so.
 
@@ -82,7 +83,8 @@ dropped by anyone running low on context. A precondition in a graph does not.
 ## Step 1 — Gate 0: hard blockers
 
 → Owner: **`references/constraints.md`** (what the gates are, cost to resolve, escape hatches)
-→ Method: **`references/assessment.md`** (the repo greps and the live AWS probes)
+→ Method: **`references/probe-aws.md`** (the live quota, region and price reads — node C) and
+**`references/read-the-repo.md`** (image architecture, protocol, session shape — node A1)
 
 Read thresholds live; never carry numbers in from the plugin. Record each gate with an evidence
 tag and one of the `gate0[].result` values in the schema below — **`fail` is not the only
@@ -111,61 +113,25 @@ adoption path be the deliverable.
 
 ## Step 1.5 — Read what the running system already emitted
 
+→ Owner: **`references/read-the-cluster.md`** (nodes A2 and B).
+
 **Do this always. It is read-only, needs nobody's permission, and it has been the single most
 decisive read available.** A swallowed exception is invisible in config, in the resource specs, and
-in a successful-looking answer — it shows up here:
-
-```bash
-kubectl logs -n <ns> <pod> --tail=200 | grep -iE 'error|exception|failed|traceback|warn'
-```
-
-Per pod, not per Service. A bare `except` that logs and continues turns a total failure into a
-component that reports healthy and serves requests: on one service the store whose only job was
-repopulating a cold cache was failing **100% of reads**, and the logs were the only place that
-appeared. Also read `status` conditions — platforms often record their own verdict there, including
-fields they accepted and then ignored.
-
-→ Method: **`references/assessment.md`**
+in a successful-looking answer — it shows up only in the logs and in `status` conditions.
 
 ## Step 1.6 — Invoking the agent: ask first, and expect the answer to be no
 
-Sending a turn through a customer's agent is **not a read.** It runs their tools for real, spends
-their model budget, writes conversation state, and on a multi-agent service really delegates. Treat
-it as an action on a production system: **get explicit permission, name what it will touch, and
-prefer a non-production tenant or environment.** If you cannot get that, this step does not happen.
+→ Owner: **`references/invoke-the-agent.md`** (nodes F, F1, F2) — the five probes, and the
+read-only substitutes for each when consent is refused.
 
-Expect it to be unavailable more often than not. A first assessment typically has a repo and
-read-only cluster access and nothing else. **That is not a gap in your work** — record
-`invocation: not_permitted` (distinct from `absent` or `unknown`) and note which findings therefore
-could not be reached, so the record shows the *class* of evidence missing rather than implying the
-controls were fine.
+Sending a turn through a customer's agent is **not a read.** Get explicit permission, name what it
+will touch, and prefer a non-production tenant. If you cannot get that, this step does not happen.
 
-Where it *is* available — a pilot, a staging environment, a pre-production deployment, or a
-customer who offers — it is worth doing, because a handful of turns has repeatedly surfaced things
-no configuration read can reach: a capability the agent advertises that has never worked, a
-fabricated citation, cross-conversation history bleed, a tool returning a resource that does not
-exist.
-
-1. One turn. Read the **answer**, not the status code.
-2. A second turn with a **fresh** conversation id — reusing one returns history-influenced answers
-   that look like broken tool calls.
-3. Two turns on the **same** conversation id, concurrently. Does either answer reflect the other's
-   input? **If `replicas > 1`, port-forward to each pod** — `port-forward svc/<name>` resolves to a
-   single pod, so this silently measures within-pod behaviour only. Observed: every probe landed on
-   one replica while the other served zero, and the cross-replica defect was invisible until each
-   pod was addressed directly.
-4. One turn that forces a tool call, then **check that tool's output against ground truth.**
-5. Compare what you saw against what the service **claims** — its description, its agent card, its
-   README. A false capability claim is a finding customers act on immediately.
-
-**When you cannot invoke, these substitute for most of it.** They are read-only:
-
-| Instead of | Read |
-|---|---|
-| watching a turn succeed or fail | the logs above, and error-rate metrics if any exist |
-| checking a tool's output against reality | the tool's own logs, and its RBAC — what it *could* return |
-| concurrency and session behaviour | the stored session/event rows, their ordering and timestamps |
-| a false capability claim | the claimed capability against the config that would implement it — a described feature with no wiring is the same finding |
+Expect it to be unavailable more often than not — a first assessment typically has a repo and
+read-only cluster access and nothing else. **That is not a gap in your work.** Record
+`invocation: not_permitted` (distinct from `absent` or `unknown`) and note which findings could not
+be reached, so the record shows the *class* of evidence missing rather than implying the controls
+were fine.
 
 ## Step 2 — Gate 1: walk the inventory
 
@@ -193,7 +159,9 @@ best practices, which this does not cover), how to detect each, and a verdict pe
 its "How to fill a row" block first** — the verdict column is one field of several, and not the one
 the customer acts on.
 → Session topology has its own reference: **`references/topologies.md`**
-→ Greps for the commonly-missed domains: **`references/assessment.md`**
+→ Searches for the commonly-missed domains: **`references/read-the-repo.md`**
+→ Controls that exist and do nothing: **`references/sweep-for-dead-controls.md`** (node E). Every
+search is positive signal; on two assessments the highest-severity findings were all negative.
 
 Record per row: `state`, `evidence` (`file:line`), `closed_by`, `requires_runtime_move`, `verdict`,
 `note` — plus `defect_owner` where a platform-supplied control is ineffective.
@@ -204,14 +172,16 @@ output. If you cannot assess a practice, record it `unknown` with the reason —
 ## Step 3 — Gate 2: measure, then model
 
 → Owner: **`references/cost-model.md`** (what to report, and what not to)
-→ Method: **`references/assessment.md`** (where the four numbers come from)
+→ Method: **`references/measure.md`** (node H — where the four numbers come from, and the 128 MB
+billing floor to check before investing in precision)
+→ Under load: **`references/concurrency-sweep.md`** (node I — consent-gated, and not the first step)
 
 If the numbers cannot be measured, mark them `open` and say the cost verdict is unavailable.
 **Do not substitute this plugin's reference figures as if they were the customer's.**
 
 ## Step 4 — Gate 3: ask only the underivable
 
-→ Owner: **`references/assessment.md`** (the question list, and why it is short)
+→ Owner: **`references/ask.md`** (node J — the question list, and why it is short)
 
 Now, and only now, ask. You have earned specificity by doing the work.
 
@@ -265,7 +235,7 @@ gate0:
     # it does not skip Gate 2.
     result: pass | trivial_fix | needs_redesign | not_a_liftable_unit | fail | unknown
     compute_type_assumed: microvm | instances   # three gates flip between them
-    # Full tag set is defined in SKILL.md — keep these in sync.
+    # Full tag set is defined in references/evidence.md — keep these in sync.
     evidence: measured:customer | measured:reference | read:source | stated:customer | verified | docs | reasoned | open
     note: <one line>
 
@@ -300,7 +270,7 @@ topology:
   # implementation-named value fits one and not the other.
   concurrent_turn_safety: safe | serialized | last_write_wins | interleaved_history | unknown
 
-# evidence: <tag> means the full tag set from SKILL.md — measured:customer, measured:reference,
+# evidence: <tag> means the full tag set from references/evidence.md — measured:customer, measured:reference,
 # read:source, read:cluster, stated:customer, verified, docs, reasoned, open. A two-value
 # measured|open enum here could not say WHOSE workload a number came from, which is the whole
 # point of the tag table.

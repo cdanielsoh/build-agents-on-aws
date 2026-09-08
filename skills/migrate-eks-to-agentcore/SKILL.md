@@ -48,147 +48,41 @@ description: >
 
 # Assessing an Agentic Service on EKS against AgentCore
 
-## What this skill is for
+A customer runs an agent on EKS. It works. They want to know where it stands, and what AgentCore
+would do for them. The honest answer is *per component and conditional*, and the conditions are
+measurable.
 
-A customer runs an agent on EKS. It works. They want to know where it stands, and what
-AgentCore would do for them. The honest answer is *per component and conditional*, and the
-conditions are measurable.
+This skill exists because the available material on this question is feature tables that assert
+savings percentages nobody sourced. A customer who catches one unsupported number discounts
+everything else you say — including the parts that are true and would have helped them. **Trust is
+the deliverable; any adoption is downstream of it.**
 
-This skill exists because the available material on this question is feature tables
-that assert savings percentages nobody sourced. A customer who catches one
-unsupported number discounts everything else you say — including the parts that are
-true and would have helped them. **Trust is the deliverable; any adoption is
-downstream of it.**
-
-### Migration is an outcome, not the objective
-
-**The assessment is the product.** A customer who learns that their tool server has no
-server-side authorization, that their approval gate has zero call sites, or that their
-conversation history has no retention policy has received something valuable whether or not they
-ever move a workload. Deliver that first and separately.
-
-Then, for each gap, the useful question is not *"should you migrate?"* but **"which AgentCore
-component closes this, and does it require moving your runtime?"** Because usually it does not:
-
-| Adoption shape | Runtime stays on EKS? | Typical fit |
-|---|---|---|
-| **Gateway** (+ **Policy**) in front of existing tools | **yes** | tool sprawl, no server-side tool authz, no per-identity scoping, missing approval gates |
-| **Identity** for outbound credentials / token vault | **yes** | hand-rolled OAuth, per-user tokens in a table |
-| **Memory** for long-term or retained state | **yes** | no retention policy, unbounded history, preference extraction |
-| **Evaluations** | **yes** | no golden set, no regression gate |
-| **Observability** | **yes** | no traces, no per-turn attribution |
-| **Runtime** | **no — this is the migration** | session isolation, inbound `CUSTOM_JWT`, scale-to-zero, ceilings met |
-
-Only the last row is a replatform. Say which row each recommendation sits in, and **lead with the
-ones that need no platform change**, because those are the ones a customer can act on this
-quarter. A component adopted alongside their existing service is a real outcome; so is
-"assessed, nothing adopted yet, revisit when X changes."
-
-**Adoptability is `component × who owns the code`, not the component alone.** The table above
-holds when the customer owns the agent process. It does **not** hold on a third-party platform,
-and that column has already been wrong once in practice:
-
-| | Customer owns the agent code | Third-party platform runs it |
-|---|---|---|
-| **Gateway** | add a tool endpoint | **still yes** — usually just a URL on a config object, the cheapest adoption available |
-| **Policy** | yes | **yes**, behind Gateway |
-| **Memory**, **Identity** | add the SDK integration | **no** — needs an SDK call inside an executor you do not ship. It is an upstream PR or a fork, so say `upstream_contribution`, not "adopt Memory" |
-| **Evaluations** | yes | **verify first** — check their trace/export format is one Evaluations accepts before promising it |
-| **Observability** | yes | partly — platform-level flags may exist; SDK-level instrumentation does not |
-
-So establish `code_ownership` **before** writing the adoption path, and never promise a component
-that needs a code change inside software the customer does not maintain. On a third-party
-platform the honest, valuable answer is usually: **their platform already ships a field for this
-and it is switched off** — which costs nothing and buys the credibility for everything else.
-
-### `requires_runtime_move: false` is this skill's load-bearing claim. Here is its actual status.
-
-Say it at the confidence it has earned, because the whole reframe rests on it and an assessor
-found it asserted only as the table above:
-
-| Claim | Status |
-|---|---|
-| Gateway/Policy can serve an agent **not** on AgentCore Runtime | `[docs]` + `[reasoned]` — Gateway is an MCP endpoint and Policy attaches to the Gateway; nothing ties either to Runtime. **Not yet demonstrated end to end from a non-Runtime caller by this plugin** |
-| **Cost/effort of doing so from inside a cluster** | `[verified]` and **not free** — see the TLS prerequisite below |
-| Memory/Identity adoptable without a runtime move | **only if the customer owns the executor** (previous table) |
-| Evaluations accepts their traces | **unverified per framework.** The reference names specific SDKs; a different runtime's trace format must be checked, not assumed |
-
-**Do not present the free-adoption path as demonstrated.** Present it as the design AgentCore
-supports, name what you have not verified, and where a customer needs certainty, say a
-proof-of-concept is the next step. That is still a far better conversation than a replatform, and
-it survives the customer testing it.
-
-### The Gateway adoption is cheap in *architecture* and not always in *effort*
-
-`gateway-private-targets.md` is explicit: **VPC egress requires the target endpoint to have a
-publicly trusted TLS certificate** — "not a self-signed cert, not a private-CA cert." A tool
-server on a plaintext ClusterIP Service, which is the normal in-cluster shape, therefore does not
-satisfy it as deployed. Reaching it means an ingress path with a real certificate, or relocating
-the tool behind something that already has one.
-
-So size it honestly: **Gateway is the cheapest adoption on the architecture axis and can still be
-weeks of work on EKS.** Saying "no runtime move" and implying "no work" is the version a customer
-catches. Check `gateway-private-targets.md` for the options before quoting effort, and note that
-its validated worked example is not an in-cluster one.
-
-**Never frame the result as abandoning what they built.** If they run a platform — theirs or a
-third party's — the recommendation is almost never "stop using it." It is "keep it, and put these
-two AgentCore components where the gaps are." An assessment that concludes with an ultimatum gets
-discounted entirely, along with the findings that were correct.
+**The assessment is the product.** Migration is one outcome among several; `adopt_components` and
+`assess_only` are first-class successful results. Never conclude "stop using what you built."
+Which components need a runtime move, which do not, and how to say so at the confidence it has
+earned → [record-and-adopt.md](references/record-and-adopt.md).
 
 ## The three rules
 
 **0. The service in front of you is not the one this skill was written against.** Every concrete
-example here is `n=1`. Expect any language (Go, TypeScript, Java, Python), any framework or none,
-agents defined as **declarative resources on a platform** rather than as code, work shaped as
-jobs or documents rather than chat turns, and multi-agent topologies. So:
+example in these references is `n=1`. Expect any language, any framework or none, agents defined as
+**declarative resources on a platform** rather than as code, work shaped as jobs or documents rather
+than chat turns, and multi-agent topologies. So: treat every example as an illustration of a *class*
+of finding; when a search returns nothing, decide whether the component is **absent** or the
+**question was wrong for this stack**, because conflating those manufactures gaps; where a practice
+is satisfied **by the platform** rather than by the customer's code, say so. **If this skill's
+vocabulary does not fit what you found, describe what you found.** A forced fit reads as
+inexperience to a customer whose stack differs.
 
-- Treat every example as an illustration of a *class* of finding, never as the expected answer.
-- When a search here returns nothing, decide whether the component is **absent** or the **question
-  was wrong for this stack** — those are different record entries, and conflating them
-  manufactures gaps that do not exist.
-- Where a practice is satisfied **by the platform** rather than by the customer's code, say so
-  rather than crediting or faulting them for it.
-- If this skill's vocabulary does not fit what you found, describe what you found. A forced fit
-  reads as inexperience to a customer whose stack differs, and it loses the account faster than
-  an admitted gap.
+**1. Read and measure before asking.** Almost everything decisive is derivable from the customer's
+repo, control plane and traffic. A questionnaire that asks what you could have read produces a sales
+script. Ask only what cannot be derived → [ask.md](references/ask.md).
 
-**1. Read and measure before asking.** Almost everything decisive is derivable from
-the customer's repo and traffic: which session topology they run, their CPU-to-wall
-ratio, their peak memory, image architecture, what bounds their concurrency. A
-questionnaire that asks what you could have read produces a sales script. Ask only
-what cannot be derived — data residency, compliance, team depth, roadmap.
+**2. Tag every claim with its evidence class.** Non-negotiable. The nine tags, what each means, and
+how to rank a source → [evidence.md](references/evidence.md).
 
-**2. Tag every claim with its evidence class.** Non-negotiable.
-
-| Tag | Means |
-|---|---|
-| `[measured:customer]` | Observed on **their running workload**. The only kind you may quote as theirs |
-| `[measured:reference]` | Observed on this plugin's reference build — **n=1 agent**. Illustrates shape, never their number |
-| `[read:source]` | **Read in their repo at `file:line`.** Most of a pre-deployment assessment is this |
-| `[read:cluster]` | Read from the **live control plane** — the Kubernetes API (a resource, its schema, RBAC, a controller's env), or the equivalent API/console of whatever platform runs the agent. Where the agent is defined declaratively, this *is* the authoritative config store, and it **outranks `[read:source]`** wherever the two disagree |
-| `[stated:customer]` | Asserted by the customer — a README, a ticket, a conversation. Often the only source for volume and spend, and not independently checkable |
-| `[verified]` | Queried from a live AWS API (Service Quotas, Pricing, SDK) — **in their account, or say whose**. For a quota, also say **applied or default**: `2500 [verified: default, eu-west-1]`. Bare `[verified]` on a number that exists in both flavours leaves the reader unable to tell whose limit it is |
-| `[docs]` | **AWS** documentation. Not their README — that is `[stated:customer]`, and mislabelling it presents a mid-range guess from an 8-line file as a documented fact |
-| `[reasoned]` | Follows from the above — argument, not observation |
-| `[open]` | Not established. Say so; do not fill the gap |
-
-`[read:source]` and `[stated:customer]` exist because they were missing and assessors had to
-choose between overclaiming (`measured`) and underclaiming (`reasoned`) for the evidence they
-actually had. A Dockerfile platform flag is neither an observation of a running system nor an
-inference — it is a fact read at a line number, and it is strong.
-
-`[read:cluster]` exists for the same reason and was added later: an assessor with no tag for the
-live API reached for `[measured:customer]`, which is defensible but conflates a config read with a
-performance observation. Three rows on that assessment would have been **recorded wrong from
-source** — concurrency safety, idempotency, and an isolation blocker that existed only at
-`HEAD` — because the deployed release and the repo were different software.
-
-**3. Never quote a cost figure you did not measure on their workload.** Not even the ones in
-this skill — they are one agent, one shape, n=1. Cost figures here exist to show *which levers
-matter*, never as the customer's number. A figure carried in from a blog post is worse than no
-figure; a figure carried in from this plugin and presented as theirs is worse still, because it
-looks sourced.
+**3. Never quote a cost figure you did not measure on their workload.** Not even the ones in this
+plugin. Figures here show *which levers matter*, never the customer's number.
 
 ## Workflow
 
@@ -203,178 +97,73 @@ looks sourced.
         no live changes to the running system
 ```
 
-The **decision record** is the spine. It is a file the customer reads, edits and
-disagrees with, and the plan is generated *from* it — so their choices bind. It also
-carries a dissent log: when the customer disagrees with a verdict, record it and
-proceed. Do not re-argue.
+The **decision record** is the spine. It is a file the customer reads, edits and disagrees with, and
+the plan is generated *from* it — so their choices bind. It carries a dissent log: when the customer
+disagrees with a verdict, record it and proceed. Do not re-argue.
 
-## Gate 0 — hard blockers, checked first
+**Start with the access survey, not with Gate 0.** Which checks are even reachable is the one thing
+that cannot be derived, and a precondition left in prose gets dropped →
+[survey-and-plan.md](references/survey-and-plan.md), then resolve the 41 questions against it with
+`scripts/lens_plan.py`. **That output is the walk.**
 
-Cheap, binary, and they can end the conversation before anyone wastes a week. Any one is
-a *stay* or a *redesign-first*: **turn duration** past the request timeout, **sidecars**, a
-**non-HTTP/MCP/A2A/AG-UI protocol**, **image size**, **concurrency** past the session or
-creation-rate caps, **region** availability, **custom isolation** (Kata/gVisor), **session
-lifetime** past the compute type's ceiling, and the **inbound auth method**.
+## The four gates
 
-**Gate against a compute type, not "AgentCore".** GPU, architecture and session duration all
-differ between microVMs and Instances — GPU is *not* a blocker on Instances, and treating it as
-one has produced a wrong customer verdict. See [constraints.md](references/constraints.md).
+**Gate 0 — hard blockers.** Cheap, binary, and any one can end the conversation before a week is
+spent. **Gate against a compute type, not "AgentCore"** — GPU, architecture and session duration all
+differ between microVMs and Instances, and treating GPU as a blocker has produced a wrong customer
+verdict. Read every threshold live in the customer's region; never carry numbers in from this plugin.
+→ [constraints.md](references/constraints.md) for the gates and what each costs to resolve,
+[probe-aws.md](references/probe-aws.md) for the live reads.
 
-**Read the thresholds live**; never carry numbers in from this plugin, because several are
-adjustable and accounts differ.
-→ [constraints.md](references/constraints.md) for the gates, what each costs to resolve, and
-which are lead-time rather than walls
-→ [assessment.md](references/assessment.md) for the probes
+**Gate 1 — walk the inventory.** "Does everything have to move?" is answered credibly by walking a
+published standard. [production-inventory.md](references/production-inventory.md) is structured on
+the **[AWS Well-Architected Agentic AI Lens](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentic-ai-lens.html)** —
+its **41 questions**, each verbatim, plus how to detect each in the customer's system and the
+migration verdict. This is a **question-level triage, not a Well-Architected review**: the Lens also
+has 150 best practices, which this does not cover. Say "41 of 41 Lens *questions*".
 
-The request timeout bites most often, and it is an escape hatch rather than a wall — but the
-escape is a redesign, which is why it belongs in Gate 0 rather than a footnote.
+**The empty rows are the finding** — "no evals", "no spend ceiling", "no tenant boundary" are the
+most valuable output, and they are true whether or not the customer migrates. A gap is not a blocker;
+most pre-date the migration and survive it. Session topology deserves its own framing because it
+determines what migration actually *deletes* → [topologies.md](references/topologies.md).
 
-## Gate 1 — walk the inventory
+**Gate 2 — economics.** Measure on their workload, then model. Never skip to the model. Check first
+whether compute is material at all: on one measured customer it was 0.04–1.2% of run rate, dominated
+by tokens and the datastore. → [measure.md](references/measure.md) for where the numbers come from,
+[cost-model.md](references/cost-model.md) for what to report.
 
-"Does everything have to move?" is answered credibly by walking a published standard, not a
-list someone invented. [production-inventory.md](references/production-inventory.md) is
-structured on the **[AWS Well-Architected Agentic AI Lens](https://docs.aws.amazon.com/wellarchitected/latest/agentic-ai-lens/agentic-ai-lens.html)**
-(June 2026) — its **41 questions**, each verbatim, plus two columns the Lens does not have:
-**how to detect it in the customer's code** and the **migration verdict**.
-
-**This is a question-level triage, not a Well-Architected review.** The Lens has 41 questions
-and **150 best practices**; this covers the questions. Say "41 of 41 Lens *questions*" and
-offer the full review (import the published lens JSON into AWS WA Tool) as the follow-on.
-
-Record `state` / `evidence` / `verdict` per practice. Nine carry most of the decision
-(starred in the reference); do not stop there, because **the empty rows are the finding** —
-"no evals", "no spend ceiling", "no tenant boundary" are the most valuable output, and they
-are true whether or not the customer migrates. A gap is not a blocker: most pre-date the
-migration and survive it.
-
-Domains most often missed, and usually present: outbound auth (2LO/3LO) and token
-propagation, multi-tenant isolation and cost attribution, self-hosted MCP servers, long-term
-memory as distinct from session state, RAG and retrieval ACLs, guardrails and PII,
-human-in-the-loop, audit / non-repudiation, evals, idempotency on write tools.
-
-**Session topology (`AGENTREL03`) deserves its own framing**, because it determines what migration
-actually *deletes*, and getting it wrong is how people overstate the benefit. There are three
-points, not two — EKS admits both a stateless and a sticky design — and **comparing the
-stateless one to AgentCore overstates the gain** by crediting the platform with the whole cost
-of the session store. → [topologies.md](references/topologies.md)
-
-## Gate 2 — economics
-
-Measure four numbers on their workload, then model. Never skip to the model, and never quote a
-figure measured on someone else's agent.
-
-The two configuration questions that dominate the bill — whether `StopRuntimeSession` is
-called, and whether AgentCore Memory is genuinely required — swung the verdict **22× on one
-measured workload**. That multiplier is a property of *that* workload's active-to-idle ratio,
-not of the platform; short conversations against a 900s idle timeout maximise it. Do not quote
-it as a platform figure.
-
-CPU was **0.85% of the bill at default config — but ~19% once tuned**, because tuning removes
-the memory and Memory-event lines it was small against. Quote whichever matches the
-configuration you are recommending. → [cost-model.md](references/cost-model.md) for what to
-report, [assessment.md](references/assessment.md) for where the numbers come from.
-
-## Gate 3 — ask only what you cannot derive
-
-Six infrastructure questions plus two product questions that decide real verdicts. Kept
-deliberately short, because by this point the work has earned specificity.
-→ [assessment.md](references/assessment.md)
-
-## What does NOT go away
-
-Always present this. It is the section that earns the right to the rest.
-
-| Stays yours | Why |
-|---|---|
-| Budget / spend ceilings | No platform bounds a runaway agent loop |
-| Session-id issuance + user binding | AgentCore does not map users to sessions `[docs]` |
-| Row-level authorization | Pod and runtime identity are per-workload, not per-user |
-| Prompt, tool design, evals, grounding | Untouched by the migration |
-| The knowledge store | Stays put. Forces VPC mode **only if it is VPC-resident** — check, don't assume |
-| Event-loop discipline | Blocking I/O in an `async def` is still yours to get right |
-
-## Evidence status of this skill's own claims
-
-Stated so you know which parts to lean on and which to verify with the customer. The
-guidance was validated by deploying one agent codebase to both EKS and AgentCore
-Runtime and measuring.
-
-**`[measured]` on a real deployment of both platforms:**
-session-store deletability (singleton agent held 3-turn context with no store), microVM
-session start ~1.96s (`[measured:reference]`, n=3, one prompt), CPU/wall ratio and per-turn CPU,
-peak memory, agent-rebuild vs store-I/O split, the cost model, ARM64/NodePool behaviour,
-event-loop blocking impact, MCP portability, **inbound JWT auth on the runtime**,
-**Gateway with a Lambda target**, **Cedar policy enforcement at the Gateway boundary**.
-
-Those measurements were fed back into **deploy-on-agentcore**, which owns the platform
-detail — inbound JWT in `identity.md`, Cedar enforcement and validation behaviour in
-`policy.md`, session and quota behaviour in `runtime-and-sessions.md`, and the billing
-model in the new `cost-and-billing.md`. This skill points at them rather than restating
-them, so there is one place to correct when the platform moves.
-
-The three that change *migration planning* specifically are in
-[constraints.md](references/constraints.md) and
-[production-inventory.md](references/production-inventory.md): inbound auth is a breaking
-cutover **for SigV4 callers and additive for the other three cases** (`AGENTSEC03`) — the
-distinction decides whether you open with the cheapest or the most expensive news; whether the
-knowledge store forces the network design depends on where it lives (`AGENTPERF03`); and tool
-authorization is scoped work the migration makes available rather than delivers (`AGENTSEC02`).
-
-**`[docs]` / `[reasoned]` — verify before asserting to a customer:**
-
-| Area | Status |
-|---|---|
-| EKS-side inbound auth (ALB OIDC) | Not built, so the ALB-vs-authorizer comparison is one-sided |
-| Outbound auth / token propagation to tools (3LO, token vault) | Inbound only was tested |
-| Row-level authorization | Cedar blocked a *tool*; filtering *rows* by caller identity untested |
-| Long-running turns via `HealthyBusy` + polling | Documented escape hatch, not demonstrated |
-| Sidecar / protocol blockers | Documented constraints, not tested |
-| GPU on the Instances compute type | `[docs]` — supported families confirmed in the devguide, not deployed by us |
-
-For outbound auth and row-level filtering, defer to **deploy-on-agentcore**
-(`identity.md`, `policy.md`, `security.md`) and say plainly that the migration effort
-for those components is an estimate.
-
-One process note worth inheriting: four of the Gateway role permissions were rediscovered
-the hard way, one error at a time, when they were already documented correctly in
-`deploy-on-agentcore/references/policy.md`. **Read the existing references before
-building anything.**
+**Gate 3 — ask.** Only what you could not derive → [ask.md](references/ask.md).
 
 ## Reference files
 
+The check graph in [survey-and-plan.md](references/survey-and-plan.md) has one node per action, and
+each node points at exactly one file below.
+
 | File | Read when |
 |---|---|
-| [lens-graph.yaml](references/lens-graph.yaml) | Which of the 41 questions your access can reach, what each depends on, and the substitute when it cannot. Resolve it with `scripts/lens_plan.py` |
-| [survey-and-plan.md](references/survey-and-plan.md) | **Start here.** The six access questions, and the check graph they produce — which checks are reachable, and what substitutes when one is not |
-| [assessment.md](references/assessment.md) | Running the assessment — what to read, probe, and ask |
-| [topologies.md](references/topologies.md) | Classifying their session design; A/B/C in depth |
-| [cost-model.md](references/cost-model.md) | Any cost conversation. The 22× swing, the crossover |
+| [survey-and-plan.md](references/survey-and-plan.md) | **Start here.** The six access questions and the check graph they produce |
+| [lens-graph.yaml](references/lens-graph.yaml) | Which of the 41 questions your access can reach, what each depends on, the substitute when it cannot. Resolve with `scripts/lens_plan.py` |
+| [evidence.md](references/evidence.md) | Tagging any claim. The nine tags and the source hierarchy |
+| [read-the-shape.md](references/read-the-shape.md) | Node A — coded, declarative or managed, and whether the repo is what runs |
+| [read-the-repo.md](references/read-the-repo.md) | Node A1 — the source searches, by language and by domain |
+| [read-the-cluster.md](references/read-the-cluster.md) | Nodes A2, B — control-plane reads and the log read. Cheapest decisive step |
+| [sweep-for-dead-controls.md](references/sweep-for-dead-controls.md) | Node E — controls that exist and do nothing, and live ones with bad side effects |
+| [invoke-the-agent.md](references/invoke-the-agent.md) | Nodes F, F1, F2 — consent-gated. Substitutes when refused |
+| [probe-aws.md](references/probe-aws.md) | Node C — quotas, region availability, prices, and whose account you are in |
+| [measure.md](references/measure.md) | Node H — the four numbers, and the billing floor to check first |
+| [concurrency-sweep.md](references/concurrency-sweep.md) | Node I — consent-gated. What integer bounds parallelism |
+| [production-inventory.md](references/production-inventory.md) | **The assessment instrument.** All 41 Lens questions, how to detect each, its verdict, and the reporting order |
+| [record-and-adopt.md](references/record-and-adopt.md) | Node K — the adoption path, what stays theirs, the stay case, the two confidence axes |
+| [ask.md](references/ask.md) | Node J — the eight underivable questions |
+| [topologies.md](references/topologies.md) | Classifying their session design; and how many runtimes for a multi-agent service |
 | [constraints.md](references/constraints.md) | Quotas, hard limits, and the honest counter-list |
-| [production-inventory.md](references/production-inventory.md) | **The assessment instrument.** All 41 Agentic AI Lens *questions* (of 150 best practices), how to detect each, and its migration verdict |
+| [cost-model.md](references/cost-model.md) | Any cost conversation. The levers, the crossover |
 | [playbook.md](references/playbook.md) | Sequencing, parallel run, rollback |
+| [provenance.md](references/provenance.md) | What this plugin actually measured, and what to verify before asserting |
 
 ## Related skills
 
-- **deploy-on-agentcore** — once the decision is made, how to actually build it
-  (runtime, Gateway, Identity, Policy, CDK, VPC isolation)
-- **strands-agent-design** — the agent itself, which the migration should not change
-
-## Reasons to stay on EKS
-
-Give these equal weight. A customer who hears only the migration case does not trust
-the migration case.
-
-- Non-agent workloads already on the cluster, with the platform team to run it
-- Turns that legitimately exceed 15 minutes with checkpoint-resume semantics
-- Custom isolation (Kata/gVisor), sidecars, or non-HTTP protocols. **Not GPU** — Instances supports it
-- Node-level runtime threat detection (GuardDuty EKS Runtime Monitoring, Falco) with no managed equivalent
-- Sessions longer than 14 days, or longer than 8 hours if microVMs are required
-- Sustained high volume where reserved or Spot capacity beats per-session billing
-- Deep Kubernetes expertise already paid for, and a working service
-- A regulatory posture that forbids the tool gateway from having a **public endpoint at all**,
-  as distinct from forbidding public *reachability*. Private reachability is achievable; private
-  *placement* is not. **Do not say "not satisfiable"** — that phrasing manufactured a blocker for
-  exactly the regulated customer who needs the real answer. The distinction is in
-  [constraints.md](references/constraints.md)
-
-"It works today" is a real argument. The burden of proof is on the migration.
+- **deploy-on-agentcore** — once the decision is made, how to actually build it (runtime, Gateway,
+  Identity, Policy, CDK, VPC isolation). It owns all platform detail; this skill points at it rather
+  than restating it, so there is one place to correct when the platform moves.
+- **strands-agent-design** — the agent itself, which the migration should not change.

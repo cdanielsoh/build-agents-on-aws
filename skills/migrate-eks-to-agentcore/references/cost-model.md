@@ -171,7 +171,7 @@ the high-water mark — and **not with `kubectl top`**, which is a ~60s windowed
 a delay and read 3.7% below true peak when checked against ground truth. Use cgroup v2
 `/sys/fs/cgroup/memory.peak`, a monotonic high-water mark and the exact quantity AgentCore bills
 on. Fallbacks when the image has no shell, and how to label them, are in
-[assessment.md](assessment.md).
+[measure.md](measure.md).
 
 **Ignoring latency as a cost lever.** Wall time is the memory meter. Fixing blocking
 I/O on the event loop cut p50 latency 39% `[measured]`, which cuts the AgentCore memory
