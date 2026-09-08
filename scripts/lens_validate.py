@@ -222,6 +222,28 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
             notes.append(f"{sid} has no decision — undecided by absence, which is honest. "
                          "Survey 2 has not covered it")
 
+    # A suggestion the customer must build themselves, with no agentcore_alternative, is ambiguous in
+    # exactly the way `absent` versus `unknown` was: either no managed capability closes this gap, or
+    # nobody checked. The first is a finding worth stating; the second is an omission that costs the
+    # customer a choice they were entitled to. Prompt for it rather than assume — some genuinely have
+    # none, which is why this is a note.
+    own = set(schema["closed_by_families"]["customers_own"])
+    for sid, s in sorted(suggestions.items()):
+        if s.get("closed_by") in own and "agentcore_alternative" not in s:
+            notes.append(f"{sid} is closed by `{s['closed_by']}` and names no agentcore_alternative. "
+                         "If no managed capability closes it, say so — otherwise survey 2 asks "
+                         "`where` with only one column on the page")
+
+    # Decisions taken before the suggestions they rest on were last edited. Not a referential error —
+    # both files are internally consistent — but the choice was made against different text, which no
+    # timestamp comparison inside a single file can reveal.
+    dpath, spath = d / "decisions.yml", d / "suggestions.yml"
+    if dpath.exists() and spath.exists() and decisions \
+            and dpath.stat().st_mtime < spath.stat().st_mtime:
+        notes.append("decisions.yml is older than suggestions.yml — the customer chose against text "
+                     "that has since changed. Re-confirm any decision whose suggestion was edited, "
+                     "or the record shows consent to something nobody read")
+
     # Plan-side coverage. Notes, not errors: the same reasoning as the assessment walk — punishing
     # an incomplete record teaches people to write receipts for work they did not do, and an item
     # nobody could run is an honest outcome that `unverifiable` exists to carry.
