@@ -62,4 +62,7 @@ async def agent_invocation(payload, context):
 
 
 if __name__ == "__main__":
-    app.run()
+    # Bind explicitly. `app.run()` with no host auto-detects, and it only picks 0.0.0.0 when
+    # `/.dockerenv` exists or DOCKER_CONTAINER is set — otherwise it binds 127.0.0.1 and the
+    # runtime never reaches READY, presenting as an application startup failure.
+    app.run(host="0.0.0.0", port=8080)  # nosec B104 - the runtime contract requires this

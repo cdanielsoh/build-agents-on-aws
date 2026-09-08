@@ -3,7 +3,8 @@
 ## Table of Contents
 1. [Runtime Model: VM-per-Session](#runtime-model-vm-per-session)
 2. [AgentCore Runtime Entrypoint](#agentcore-runtime-entrypoint)
-3. [Session (Runtime Container)](#session-runtime-container)
+3. [Two Deployment Artifacts: Container or Code Zip](#two-deployment-artifacts-container-or-code-zip)
+4. [Session (Runtime Container)](#session-runtime-container)
 4. [SessionBuilder (Construction)](#sessionbuilder-construction)
 5. [Configuration](#configuration)
 6. [No Graceful Shutdown](#no-graceful-shutdown)
@@ -24,11 +25,114 @@ This means:
 
 The correct pattern is a **singleton Session** initialized on first request and reused for the lifetime of the container.
 
+### Verified
+
+Measured on a deployed runtime, because "global state persists" is the claim everything
+else rests on. A module-level agent with `SESSION_BACKEND=memory` and **no external
+store** served a three-turn conversation in which turn 2 said "what are **its**
+prerequisites" and turn 3 said "which of **those** also lead to X". Both referents
+resolved correctly. Neither is answerable without the prior turns in context, so the
+microVM retained `agent.messages` across invocations.
+
+Practical consequence: an agent moving onto Runtime can usually **delete** its session
+store, its session cache, and its flush policy outright — not replace them.
+
+### Cold start
+
+| | Measured |
+|---|---|
+| First invoke on a new session (includes microVM provisioning) | **3.46s** |
+| Subsequent invokes, same session | **1.50s** |
+| **microVM start overhead** | **~1.96s** |
+
+Identical prompt, three runs each. ~2s is invisible against a multi-second agent turn,
+which is what makes per-session compute viable at all — but it is not zero, so a client
+that fails to send a consistent session ID pays it on **every** request.
+
+A measurement caution: comparing a simple first turn against more complex later turns
+produced a *negative* overhead. Hold the prompt constant.
+
+### Quotas that shape the design
+
+Verified via `aws service-quotas list-aws-default-service-quotas --service-code
+bedrock-agentcore`. Check `list-service-quotas` too — an account may already have
+increases applied.
+
+| Quota | Default | Adjustable |
+|---|---|---|
+| **Request timeout** | **15 min** | **No** |
+| Max payload (request and response) | 100 MB | No |
+| Docker image size | 2 GB | No |
+| Active session workloads per account | **region-variant — read it live.** 5,000 in us-east-1/us-west-2, **2,500** in ap-northeast-2, ap-southeast-2, eu-west-1 `[verified]`. Quoting one figure globally invents or clears a blocker | Yes |
+| New session creation rate | 25/s | Yes |
+| Runtime data plane rate | 1,000/s | Yes |
+| Endpoints per agent | 10 | Yes |
+| Versions per agent | 1,000 | Yes |
+
+The 15-minute timeout is the one to design around: a turn that can exceed it must become
+an async background task reporting `HealthyBusy` from `/ping` and polled separately.
+
+**There is a second non-adjustable ceiling** that is easy to miss: `Streaming maximum duration`
+(`L-C91AC63F`) at 60 minutes. A long-lived SSE or WebSocket stream is bounded by it even when
+individual requests stay under 15 minutes.
+
+Note also what is **absent** from Service Quotas: there is no per-session CPU or memory quota, so
+per-session resource sizing cannot be verified through the quota API.
+
+**Region availability: probe, do not trust a list.** Confirmed present in `us-east-1`,
+`us-west-2`, `ap-northeast-1`, `ap-northeast-2`, `eu-central-1`, `eu-west-1`,
+`ap-southeast-2` via `list-agent-runtimes`. Widely-repeated material still claims four
+regions.
+
+### ARM64 is required, and the error names the wrong culprit
+
+**This applies to the microVM compute type.** The **Instances** compute type supports
+**x86_64 and arm64** `[docs]`, so an amd64-only dependency is a blocker on microVMs and not on
+Instances — which can invert an architecture gate. This file is the owner of that fact;
+`migrate-eks-to-agentcore/references/constraints.md` previously stated it while naming this file
+as the source, so a reader checking the citation found nothing.
+
+For microVMs: `linux/arm64` only. An amd64 image does not fail informatively: it **pulls
+successfully**, the container is Created and Started, then dies with
+
+```
+exec /usr/local/bin/python: exec format error
+```
+
+which presents as an application crash loop. Check image architecture against the host
+before debugging the application. (The same error appears in reverse on EKS if an arm64
+image lands on an amd64 node — EKS Auto Mode's built-in `general-purpose` NodePool is
+hardcoded to amd64, so running one image on both platforms needs a Graviton NodePool.)
+
+For what any of this costs, see **[cost-and-billing.md](cost-and-billing.md)** — session
+lifetime is the dominant meter, not CPU.
+
 ---
 
 ## AgentCore Runtime Entrypoint
 
-The agent runs as a Docker container on Bedrock AgentCore Runtime (serverless). The entrypoint uses `BedrockAgentCoreApp` with an `@app.entrypoint` async generator.
+The agent runs as a Docker container on Bedrock AgentCore Runtime (serverless). The entrypoint
+uses `BedrockAgentCoreApp` with an `@app.entrypoint` handler.
+
+**Three handler shapes are supported, not just the async generator** — worth knowing, because a
+plain `return` handler is correct and earlier versions of this file implied it was not.
+`[verified]` from `BedrockAgentCoreApp._invoke_handler` in `bedrock-agentcore` 1.22.0:
+
+| Handler | Dispatched onto |
+|---|---|
+| `async def` + `yield` (async generator) | bridged through the worker loop as a sync generator |
+| `async def` + `return` | a **dedicated worker event loop** |
+| plain `def` (incl. sync generators) | the thread pool |
+
+Stream only if the caller streams; a specialist agent invoked by another agent has no reason to.
+
+**The isolation is load-bearing, and it is one of the hard parts AgentCore removes.** The
+docstring's own reason: *"This ensures the main event loop stays responsive for /ping health
+checks regardless of whether handlers contain blocking operations."* So a blocking call inside
+the entrypoint does **not** stall the health check the way it would in a hand-rolled FastAPI
+service. If an assessment found event-loop blocking or an undersized executor on their EKS
+service, that defect does not carry across — say so, rather than scheduling a fix for both
+platforms.
 
 ### Basic Structure
 
@@ -106,6 +210,59 @@ if __name__ == "__main__":
 **No cleanup**: The lifespan `yield` block won't run (containers are hard-killed). Don't rely on it for saving state.
 
 ---
+
+## Two Deployment Artifacts: Container or Code Zip
+
+Everything above and below assumes a container image, because that is the path this skill's
+templates and CDK use. **There is a second path, and earlier versions of these references did not
+mention it at all** — which led one generated migration plan to build a 138-line CodeBuild stack,
+a Dockerfile rewrite and an architecture assertion to solve a problem this path removes.
+
+`agentRuntimeArtifact` is a union: `containerConfiguration` **or** `codeConfiguration`.
+
+```python
+agentRuntimeArtifact={
+    "codeConfiguration": {
+        "code": {"s3": {"bucket": f"bedrock-agentcore-code-{account_id}-{region}",
+                        "prefix": f"{agent_name}/deployment_package.zip"}},
+        "runtime": "PYTHON_3_13",
+        "entryPoint": ["opentelemetry-instrument", "main.py"],  # drop the wrapper if no ADOT dep
+    }
+},
+lifecycleConfiguration={"idleRuntimeSessionTimeout": 300, "maxLifetime": 1800},
+```
+
+In CDK: `CfnRuntime.AgentRuntimeArtifactProperty(code_configuration=...)` with
+`CodeConfigurationProperty(code, entry_point, runtime)` `[verified]` in aws-cdk-lib.
+
+### Why it matters for a migration, beyond convenience
+
+| | Container | Code zip |
+|---|---|---|
+| Needs a Dockerfile, ECR, an image build | yes | **no** |
+| Command override | **none** — `containerConfiguration` carries only a URI, so the image `CMD` must be the AgentCore entrypoint and any second consumer (an EKS Deployment) must override it | **`entryPoint` is a property of the runtime** |
+| Size ceiling | image limit (2048 MB) | **250 MB zipped / 750 MB unzipped**, combined `[docs]` |
+| Architecture | arm64 (microVMs) | arm64 — the zip must contain arm64 wheels |
+
+The middle row is the decisive one for a **dual-platform phase**. On the container path, "one
+image serving both EKS and AgentCore" forces a change to the running EKS Deployment. On the code
+path there is no shared `CMD` to fight over, so that whole problem — and the Phase 0 item it
+generates — disappears. For a small pure-Python agent this is usually the cheaper migration.
+
+### Traps specific to the zip
+
+- **Build the wheels for arm64**, not for your laptop. Pure-Python packages are fine anywhere;
+  NumPy, Pandas and anything with C extensions are not:
+  ```bash
+  uv pip install --python-platform aarch64-manylinux2014 --python-version 3.13 \
+      --target=deployment_package --only-binary=:all: -r pyproject.toml
+  ```
+  A package available only as a source distribution must be built on an arm64 Amazon Linux host.
+- **Exclude `__pycache__`.** Bytecode compiled on a different architecture may not load `[docs]`.
+- **File permissions are enforced:** 644 for non-executable files, 755 for directories and
+  executables. Zips built on Windows commonly violate this.
+- The zip is decompressed at **`/var/task`**, which is the head of `sys.path` — so a vendored
+  dependency in a subfolder is imported as `from <folder> import <pkg>`.
 
 ## Session (Runtime Container)
 
@@ -405,7 +562,19 @@ AgentCore Runtime includes an ADOT (AWS Distro for OpenTelemetry) sidecar that c
 
 ### Log Streams in CloudWatch
 
-AgentCore creates log streams under `/aws/bedrock-agentcore/runtimes/{runtime-id}/`:
+The log **group** is per runtime *and endpoint*:
+`/aws/bedrock-agentcore/runtimes/{runtime-id}-{endpoint-name}`. The endpoint suffix is not
+optional — `[measured:reference]`, read off 10 live runtimes, every group ended `-DEFAULT` or
+`-<endpoint_name>`. An earlier version of this line omitted it, and a `describe-log-groups`
+built from the documented path returns nothing against a perfectly healthy runtime, which
+presents as "the agent is not logging".
+
+```bash
+aws logs describe-log-groups --log-group-name-prefix /aws/bedrock-agentcore/runtimes \
+  --region <r> --query 'logGroups[].logGroupName' --output text
+```
+
+Within that group, the streams are:
 
 | Stream Pattern | Content |
 |---|---|

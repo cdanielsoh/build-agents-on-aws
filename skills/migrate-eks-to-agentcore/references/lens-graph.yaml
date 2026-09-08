@@ -1,0 +1,260 @@
+# The check-graph nodes and the 41 Agentic AI Lens questions, as one dependency graph.
+#
+# Why this is data and not prose: the prose tables in production-inventory.md say how to DETECT
+# each thing, which is necessary but does not say whether you CAN. Access decides that, and a
+# reader cannot hold 41 access preconditions in their head — so they get guessed, and a question
+# nobody could answer gets recorded `absent`, which is a false finding about the customer.
+#
+# Feed the survey answers in and let scripts/lens_plan.py compute reachability. What it prints is
+# not advice; it is the walk. It is computed on demand and never stored — a stored copy of the
+# intended walk is a claim that can go stale AND be asserted done, which is exactly the defect the
+# old hand-written `plan:` block had.
+#
+# needs:      access classes required, ALL of them. See `access_classes` below.
+# needs_any:  access classes where ANY one suffices (nodes only — a question needing either of two
+#             evidence classes has always turned out to be two questions).
+# after:      other questions or nodes that must be answered first, because this one's meaning
+#             depends on their answer. A dependency, not a preference.
+# substitute: what to do when `needs` is unmet. `null` means nothing substitutes — record
+#             `unknown` with the blocker, never `absent`.
+# only_if:    a shape condition. When false the honest state is `not_applicable`, not a gap.
+#
+# The receipt vocabulary — what may be observed about a node or a question, and the legal values —
+# is in record-schema.yaml. This file owns the walk; that one owns what you may say about it.
+
+# Each access class is exercised by exactly one reference file, named in the comment beside it.
+# The check-graph node that owns that file is in the `nodes:` block below.
+access_classes:
+  source:      "application source, at the revision deployed (survey S1)"        # read-the-repo.md    (A1)
+  cluster:     "control-plane read — resource specs, schemas, RBAC, env (S2)"    # read-the-cluster.md (A2)
+  logs:        "container logs and status conditions (S2). Read-only, no consent needed"  # read-the-cluster.md (B)
+  aws:         "live AWS API reads in THEIR account (S2 + account check)"        # probe-aws.md        (C)
+  behaviour:   "sending requests to the agent (S4). Consent-gated; expect no"    # invoke-the-agent.md (F)
+  load:        "generating concurrent load (S5). Consent-gated, more intrusive than behaviour"  # concurrency-sweep.md (I)
+  telemetry:   "their existing metrics/traces with real traffic in them (S3)"    # measure.md          (H)
+  deployment:  "a running deployment exists (S3), so anything can be measured"   # measure.md          (H)
+  human:       "someone who can answer product and process questions (S6)"       # ask.md              (J)
+
+# ── The check graph. One node per action; each names exactly one reference file. ─────────────
+# The prose version, with the reasoning and the full substitute column, is survey-and-plan.md.
+# `lens_plan.py selfcheck` asserts the two agree on the node ids and on the file per node, because
+# a table in one file and a graph in another have drifted in this project before.
+nodes:
+  A:
+    file: read-the-shape.md
+    needs_any: [source, cluster]
+    substitute: null          # neither source nor control plane: the assessment is not possible
+  A1:
+    file: read-the-repo.md
+    needs: [source]
+    after: [A]
+    substitute: "pin to the running build, or drop to cluster reads only"
+  A2:
+    file: read-the-cluster.md
+    needs: [cluster]
+    after: [A]
+    substitute: "source, explicitly labelled as possibly-not-deployed"
+  B:
+    file: read-the-cluster.md
+    needs: [logs]
+    substitute: null          # the cheapest high-yield read there is; say what its absence costs
+  C:
+    file: probe-aws.md
+    needs: [aws]
+    substitute: "list-aws-default-service-quotas only, tagged defaults-only"
+  D:
+    file: constraints.md
+    after: [C]
+    substitute: "gate against defaults and set compute_type_assumed"
+  E:
+    file: sweep-for-dead-controls.md
+    needs_any: [source, cluster]
+    after: [A]
+    substitute: "diff what the resource declares against what the controller created"
+  F:
+    file: invoke-the-agent.md
+    needs: [behaviour]
+    substitute: "the tool's own logs; stored session rows; claimed capability vs the config that would implement it"
+  F1:
+    file: invoke-the-agent.md
+    needs: [behaviour]
+    after: [F]
+    substitute: "the tool's RBAC — what it COULD return — plus its logs"
+  F2:
+    file: invoke-the-agent.md
+    needs: [behaviour]
+    after: [F]
+    substitute: "stored session and event rows, their ordering and timestamps"
+  G:
+    file: production-inventory.md
+    after: [A]
+    substitute: "walk it regardless; rows `unknown` with the blocking node, never `absent`"
+  H:
+    file: measure.md
+    needs: [deployment]
+    substitute: "every number `open`; cost_confidence.per_turn unavailable"
+  I:
+    file: concurrency-sweep.md
+    needs: [load]
+    after: [H]
+    substitute: "single-level numbers, explicitly labelled not-production"
+  J:
+    file: ask.md
+    needs: [human]
+    substitute: "engagement: internal_reference; the questions become open_questions, not undecided rows"
+  K:
+    file: record-and-adopt.md
+    after: [G]
+    substitute: null
+
+questions:
+
+  # ── Operational excellence ────────────────────────────────────────────────
+  AGENTOPS01:
+    needs: [human]
+    substitute: null          # runbooks and on-call cannot be inferred from a repo
+  AGENTOPS02:
+    needs: [source]
+    substitute: "prompts mounted into the running container, via cluster; tells you the value, not the lifecycle"
+  AGENTOPS03:
+    needs: [source]
+    substitute: "the running image tag and its mutability — a mutable tag is a finding on its own"
+  AGENTOPS04:
+    needs: [cluster]
+    substitute: "source, if tools are declared in-process"
+  AGENTOPS05:
+    needs: [cluster, logs]
+    substitute: null
+  AGENTOPS06:
+    needs: [source]
+    substitute: "CI config in the repo; absence of an eval directory is itself the answer"
+  AGENTOPS07:
+    needs: [aws]
+    substitute: "cluster-side dashboards or alarms, if any"
+
+  # ── Security ──────────────────────────────────────────────────────────────
+  AGENTSEC01:
+    needs: [cluster]
+    after: [AGENTPERF03]      # partitioning of long-term memory is moot until you know it exists
+    substitute: "stored session/memory rows and their key structure"
+  AGENTSEC02:
+    needs: [cluster]
+    after: [AGENTOPS04]       # you cannot reason about tool authz without the tool inventory
+    substitute: "the tool server's RBAC — what it COULD do — plus whether the allowlist is client- or server-side"
+  AGENTSEC03:
+    needs: [cluster]
+    substitute: "source, for in-app JWT validation; but read the middleware, do not infer from a mode name"
+  AGENTSEC04:
+    needs: [source, cluster]
+    after: [AGENTSEC02]       # authorization-inside-reasoning only matters once tool scope is known
+    substitute: "the system prompt as deployed, plus whether any guardrail is attached"
+  AGENTSEC05:
+    needs: [logs]
+    substitute: null
+  AGENTSEC06:
+    only_if: multi_agent
+    needs: [cluster]
+    after: [AGENTSEC03]       # identity survival across a hop presupposes knowing inbound identity
+    substitute: "the delegation config — whether caller identity is passed at all"
+  AGENTSEC07:
+    needs: [cluster]
+    after: [AGENTOPS04]
+    substitute: "the approval field's value across all agents, and its call sites — a control set nowhere is the finding"
+  AGENTSEC08:
+    needs: [cluster]
+    substitute: "guardrail attachment and input caps in config; effectiveness needs behaviour"
+  AGENTSEC09:
+    needs: [human, aws]
+    substitute: "node-level runtime threat detection presence via cluster — decides whether a managed move is a REGRESS"
+
+  # ── Reliability ───────────────────────────────────────────────────────────
+  AGENTREL01:
+    needs: [cluster]
+    substitute: null
+  AGENTREL02:
+    needs: [source]
+    substitute: "tool declarations in the resource spec, on a declarative platform"
+  AGENTREL03:
+    needs: [cluster]
+    substitute: "stored session rows: ordering, timestamps, and whether writes interleave"
+  AGENTREL04:
+    only_if: multi_agent
+    needs: [cluster]
+    substitute: "the delegation graph as declared"
+  AGENTREL05:
+    needs: [behaviour]
+    after: [AGENTPERF03]      # grounding correctness presupposes knowing what it retrieves from
+    substitute: "the claimed capability against the config that would implement it — a described corpus with no retrieval wiring is the same finding"
+  AGENTREL06:
+    needs: [source]
+    substitute: "whether write-capable tools exist at all, from the tool inventory"
+  AGENTREL07:
+    needs: [logs]
+    substitute: "retry and timeout configuration, if any is declared"
+  AGENTREL08:
+    needs: [behaviour]
+    substitute: "logs — a tool failure that fails the turn usually leaves a trace"
+
+  # ── Performance efficiency ────────────────────────────────────────────────
+  AGENTPERF01:
+    needs: [telemetry]
+    substitute: "logs, if request wall time is recorded; else `open` and say Gate 2 is unavailable"
+  AGENTPERF02:
+    needs: [telemetry]
+    after: [AGENTOPS04]
+    substitute: "tool count per agent as declared — an upper bound on hops, not a measurement"
+  AGENTPERF03:
+    needs: [cluster]
+    substitute: "source, for retrieval client construction"
+  AGENTPERF04:
+    needs: [cluster]
+    substitute: null
+  AGENTPERF05:
+    only_if: multi_agent
+    needs: [telemetry]
+    after: [AGENTREL04]
+    substitute: "the fan-out count as declared — coordination overhead is then reasoned, not measured"
+  AGENTPERF06:
+    needs: [cluster]
+    after: [AGENTOPS04]
+    substitute: "the tool catalogue size served to the model; result sizes need behaviour"
+  AGENTPERF07:
+    needs: [cluster]
+    after: [AGENTSEC01]       # noisy-neighbour control presupposes knowing the tenancy model
+    substitute: "declared rate limits and resource limits"
+
+  # ── Cost optimization ─────────────────────────────────────────────────────
+  AGENTCOST01:
+    needs: [source]
+    substitute: "budget/ceiling fields in the resource spec, on a declarative platform"
+  AGENTCOST02:
+    needs: [telemetry]
+    substitute: "prompt-caching config and the model id — tells you whether it COULD cache, not whether it does"
+  AGENTCOST03:
+    needs: [cluster]
+    after: [AGENTREL03]       # session lifetime is a property of the topology
+    substitute: "idle-timeout and retention settings as configured"
+  AGENTCOST04:
+    needs: [telemetry]
+    after: [AGENTOPS04]
+    substitute: "whether any result cache exists in config"
+  AGENTCOST05:
+    needs: [telemetry, logs]
+    substitute: "whether a tenant or user id is present in any emitted record — no identifier means attribution is impossible"
+  AGENTCOST06:
+    needs: [aws]
+    substitute: null
+  AGENTCOST07:
+    needs: [aws, human]
+    substitute: "AWS Budgets presence; review cadence needs a person"
+
+  # ── Sustainability ────────────────────────────────────────────────────────
+  AGENTSUS01:
+    needs: [cluster, telemetry]
+    substitute: "declared resource requests and limits versus measured peak, if any measurement exists"
+  AGENTSUS02:
+    needs: [source]
+    substitute: "the running image's own lockfile, read out of the container"
+  AGENTSUS03:
+    needs: [source]
+    substitute: "the service's own description and README against what the config implements — a false capability claim needs no source at all"

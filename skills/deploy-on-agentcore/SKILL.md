@@ -8,6 +8,12 @@ description: >
   infrastructure. Trigger on AgentCore deployment,
   authentication, authorization, gateway, memory, evaluation, telemetry,
   networking, or session questions.
+  Trigger also on AgentCore cost and billing (pricing, vCPU-hour, GB-hour,
+  StopRuntimeSession, idle session billing, peak memory billing, why is my
+  AgentCore bill high), inbound auth (CUSTOM_JWT authorizer, SigV4 vs JWT on a
+  runtime, "Authorization method mismatch", invoking a runtime with a Bearer
+  token), and gateway interceptors (REQUEST/RESPONSE interceptors,
+  interceptionPoints, payloadFilter, redacting a gateway response).
 ---
 
 # Building Agents on AWS Bedrock AgentCore
@@ -107,6 +113,10 @@ Data Store(s)                      -- DynamoDB, RDS, or existing APIs
 | Constrain tool arguments (refund ceilings, scoping) | `references/policy.md`               |
 | Shadow-test an authorization rule on real traffic   | `references/policy.md`               |
 | Generate Cedar policies from natural language       | `references/policy.md`               |
+| Accept a JWT instead of SigV4 on inbound calls      | `references/identity.md`              |
+| **Estimate or reduce what AgentCore costs**         | `references/cost-and-billing.md`      |
+| Stop paying for idle sessions (`StopRuntimeSession`) | `references/cost-and-billing.md`     |
+| Decide whether you need AgentCore Memory at all     | `references/cost-and-billing.md`      |
 | Score a deployed agent from its traces              | `references/evaluations.md`           |
 | Monitor production agent quality continuously       | `references/evaluations.md`           |
 | Run a batch regression audit over past sessions     | `references/evaluations.md`           |

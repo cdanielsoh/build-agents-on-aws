@@ -947,3 +947,30 @@ Two checks worth having, because this class of bug is invisible at deploy time:
 
 - No runtime is on a mutable tag.
 - Every pinned image digest actually exists in ECR.
+
+**The obvious implementation of the first one cannot work, so here is the working one.** If the
+container URI is built from `repository.repository_uri` — the normal way, and mandatory across a
+stack boundary — the synthesized value is a `Fn::Join`/`Fn::ImportValue` token, never a string:
+
+```python
+uri = runtime["Properties"]["AgentRuntimeArtifact"]["ContainerConfiguration"]["ContainerUri"]
+assert not isinstance(uri, str)          # a plain string here means it was hardcoded
+```
+
+So `assert isinstance(uri, str)` followed by `uri.rsplit(":")` fails for every correctly built
+stack, and the lines after it are unreachable. Assert on the tag **before** it is embedded:
+
+```python
+# Pass the tag in as a synth-time value (e.g. asset.asset_hash) and test that value.
+assert IMAGE_TAG not in ("latest", "main", "prod")
+assert re.fullmatch(r"(src-)?[0-9a-f]{16,64}", IMAGE_TAG), IMAGE_TAG
+# Or, if you must read it out of the template, take the trailing literal of the Fn::Join:
+parts = uri["Fn::Join"][1]
+assert isinstance(parts[-1], str) and ":latest" not in parts[-1]
+```
+
+**And do not compose the skip-existing-tag recipe above with an architecture assertion
+naively.** `docker image inspect` after the `if/fi` runs on the skip path too, where no local
+image exists — so an unchanged re-run reports `FATAL: image is not arm64` and the build fails
+naming the wrong cause, on exactly the path the skip exists to make cheap. Put the assertion
+**inside the `else`**, or `docker pull` first.
