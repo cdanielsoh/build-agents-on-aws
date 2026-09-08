@@ -10,8 +10,9 @@ description: >
   and so is deciding nothing yet. Use this skill whenever the user wants to know
   where their agent stands, what a production-grade agent service requires, which
   parts AgentCore actually replaces, the real cost comparison between
-  self-hosted and AgentCore, or is planning a phased move. Produces an editable
-  decision record, then a phased plan and scaffolding from it.
+  self-hosted and AgentCore, or is planning a phased move. Logs the walk as an
+  auditable receipt trail, proposes grouped changes for the customer to accept,
+  decline or defer, then generates a phased plan from their decisions alone.
   Trigger on: migrate agent to AgentCore, EKS to AgentCore, move agent off
   Kubernetes, should we use AgentCore or EKS, AgentCore vs EKS, AgentCore vs
   self-managed, agent platform decision, agentic service on EKS, containerised
@@ -87,24 +88,44 @@ plugin. Figures here show *which levers matter*, never the customer's number.
 ## Workflow
 
 ```
-/assess-agentcore-migration [repo]     →  .agentcore-migration/decisions.yml
-        Gate 0  hard blockers       (minutes, binary, cheapest first)
-        Gate 1  inventory walk      (read the code, against the Lens)
-        Gate 2  economics           (measure, then model)
-        Gate 3  the underivable     (ask — and only here)
+/assess-agentcore-migration [repo]     →  .agentcore-migration/
+        survey 1  access & permission  (the only thing that cannot be derived)
+        Gate 0    hard blockers        (minutes, binary, cheapest first)
+        Gate 1    inventory walk       (read the code, against the Lens)
+        Gate 2    economics            (measure, then model)
+        Gate 3    the underivable      (ask — and only here)
+        survey 2  the customer decides (proceed / decline / defer-with-condition)
                     ↓
 /plan-agentcore-migration              →  phased plan + scaffolding
-        no live changes to the running system
+        acts only on decisions; no live changes to the running system
 ```
 
-The **decision record** is the spine. It is a file the customer reads, edits and disagrees with, and
-the plan is generated *from* it — so their choices bind. It carries a dissent log: when the customer
-disagrees with a verdict, record it and proceed. Do not re-argue.
+**Two surveys, and the symmetry is the point: survey 1 gates what we may look at, survey 2 gates
+what we may change.** The assessor does not author the verdicts. It produces *suggestions* — this is
+the change, here is what it buys, here is what it does not fix — and the human chooses.
+
+Six files, one writer each. Nothing describes the same fact twice:
+
+| File | Holds | Writer |
+|---|---|---|
+| `access.yml` | survey 1 | written once, by hand |
+| `receipts.jsonl` | append-only log of work actually done | `lens_plan.py record` |
+| `findings.yml` | everything observed, projected from receipts | generated. **Never hand-edited** |
+| `assessment.yml` | the assessor's judgement | model-authored |
+| `suggestions.yml` | grouped proposals, each citing findings | model-authored |
+| `decisions.yml` | survey 2 | written with the human |
+
+**Receipts are the spine.** They are written at the moment of observation, not reconstructed at
+write-up time, which is where citations used to come from recollection and be wrong. A correction is
+a **new receipt** — including a customer saying a finding is wrong, which is just `stated:customer`.
+Receipts carry supersession, so reinterpreting old evidence does not require fabricating a new
+observation → [receipts.md](references/receipts.md).
 
 **Start with the access survey, not with Gate 0.** Which checks are even reachable is the one thing
 that cannot be derived, and a precondition left in prose gets dropped →
-[survey-and-plan.md](references/survey-and-plan.md), then resolve the 41 questions against it with
-`scripts/lens_plan.py`. **That output is the walk.**
+[survey-and-plan.md](references/survey-and-plan.md), then resolve the 41 questions and the 15 nodes
+against it with `scripts/lens_plan.py resolve`. **That output is the walk.** Nothing writes the
+intended walk to a file: a stored plan can be both stale and asserted done.
 
 ## The four gates
 
@@ -142,7 +163,9 @@ each node points at exactly one file below.
 | File | Read when |
 |---|---|
 | [survey-and-plan.md](references/survey-and-plan.md) | **Start here.** The six access questions and the check graph they produce |
-| [lens-graph.yaml](references/lens-graph.yaml) | Which of the 41 questions your access can reach, what each depends on, the substitute when it cannot. Resolve with `scripts/lens_plan.py` |
+| [lens-graph.yaml](references/lens-graph.yaml) | The 15 nodes and the 41 questions as one graph: what each needs, what it depends on, the substitute when access is missing. Resolve with `scripts/lens_plan.py` |
+| [receipts.md](references/receipts.md) | **Recording anything.** The six artifacts, the eight receipt kinds, and how a correction works |
+| [record-schema.yaml](references/record-schema.yaml) | The receipt vocabulary — every legal value. `record` validates against it, so an invalid receipt is not written |
 | [evidence.md](references/evidence.md) | Tagging any claim. The nine tags and the source hierarchy |
 | [read-the-shape.md](references/read-the-shape.md) | Node A — coded, declarative or managed, and whether the repo is what runs |
 | [read-the-repo.md](references/read-the-repo.md) | Node A1 — the source searches, by language and by domain |
@@ -153,7 +176,7 @@ each node points at exactly one file below.
 | [measure.md](references/measure.md) | Node H — the four numbers, and the billing floor to check first |
 | [concurrency-sweep.md](references/concurrency-sweep.md) | Node I — consent-gated. What integer bounds parallelism |
 | [production-inventory.md](references/production-inventory.md) | **The assessment instrument.** All 41 Lens questions, how to detect each, its verdict, and the reporting order |
-| [record-and-adopt.md](references/record-and-adopt.md) | Node K — the adoption path, what stays theirs, the stay case, the two confidence axes |
+| [record-and-adopt.md](references/record-and-adopt.md) | Node K — suggestions and survey 2, what stays theirs, the stay case, the two confidence axes |
 | [ask.md](references/ask.md) | Node J — the eight underivable questions |
 | [topologies.md](references/topologies.md) | Classifying their session design; and how many runtimes for a multi-agent service |
 | [constraints.md](references/constraints.md) | Quotas, hard limits, and the honest counter-list |

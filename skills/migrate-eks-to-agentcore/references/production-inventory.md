@@ -27,32 +27,53 @@ code**, and **the migration verdict**.
 
 ## How to fill a row — read this before walking the questions
 
-**The `Verdict` column below is one field of several, and it is not the one the customer acts
-on.** This file used to emit only that column, so assessors walked 41 rows here and then had to
-reconstruct the rest of the record from a schema comment in another file — which is why
-schema-level defects kept surviving. Each row you walk produces:
+**You do not fill rows. You write receipts, and `findings.yml` is generated from them.** Walking a
+question produces one or two `lens_plan.py record` calls, made *at the moment you observe something*
+rather than at write-up time:
+
+```bash
+lens_plan.py record --question AGENTSEC02 --component tool_allowlist \
+    --state present_but_ineffective --ineffective-because partially_covers \
+    --defect-owner customer \
+    --tag read:source --evidence "tools/registry.py:88 — allowlist is client-side" \
+    --source "grep -rn ALLOWED_TOOLS tools/"
+
+lens_plan.py record --remedy AGENTSEC02 --component tool_allowlist \
+    --closed-by platform_config --remedy-verified false --requires-runtime-move false \
+    --tag read:cluster --evidence "chart/values.yaml:210 authz.serverSide unset" \
+    --source "helm get values kagent"
+```
 
 | Field | Answers | Note |
 |---|---|---|
 | `state` | does the control exist, and does it work? | `platform_provides` and `available_unconfigured` exist for mechanisms **the customer neither built nor switched on** — do not record an upstream success as their failure |
-| `ineffective_because` | *why* it does not work | `never_invoked` is the severe class: exists, reads as present in review, zero call sites |
+| `ineffective_because` | *why* it does not work | `never_invoked` is the severe class: exists, reads as present in review, zero call sites. **Required** whenever `state` is `present_but_ineffective` — `record` rejects the receipt without it |
 | `defect_owner` | whose bug is it — `customer`, `platform`, `operator_config`? | required when a **platform-supplied** mechanism is ineffective. Without it the record aims the fix at the wrong people |
-| `closed_by` | what closes it | **Non-AgentCore answers first** — `platform_config`, `customer_code`, `cluster_config`, `iam_policy`, `upstream_contribution`. Reaching for a component to make a row look productive is the failure mode |
+| `--component` | which of several rows sharing this practice | This is how "41 questions, 66 rows" stops being a coverage dispute: both numbers are now computed from the same receipts |
+| `closed_by` | what closes it — **a separate `remedy` receipt** | **Non-AgentCore answers first** — `platform_config`, `customer_code`, `cluster_config`, `iam_policy`, `upstream_contribution`. Reaching for a component to make a row look productive is the failure mode |
+| `remedy_verified` | did you confirm the field takes effect? | on the remedy receipt, because the remedy is its own observation with its own evidence |
 | `requires_runtime_move` | does acting on it need a replatform? | `false` for almost everything. These are what the customer can do this quarter, and they lead the report |
-| `Verdict` (this file's column) | migrate / keep / delete / gap / regress … | the **migration** shape only. On a service that is not migrating, it is the least useful field in the row |
 
-Two rules that follow, and that the tables below cannot express on their own:
+Three rules that follow, and that the tables below cannot express on their own:
 
 - **An empty detection result may mean the question does not apply to this stack**, not that the
   control is absent. Recording `absent` there manufactures a finding. Use `not_applicable` or
-  `unknown` and say which.
+  `unknown` and say which. `status` cross-checks this for you: a question recorded `absent` when
+  `resolve` says you had no access to answer it gets reported as divergence.
 - **A remedy field the platform ships may itself be inert.** Observed: a field the CRD accepted,
   validated, and the runtime silently ignored — reported only in a status condition. So
-  `closed_by: platform_config` is a claim to verify, not a conclusion; mark it unverified if you
-  could not confirm the field takes effect on the runtime they actually run.
+  `closed_by: platform_config` is a claim to verify, not a conclusion; record
+  `--remedy-verified false` if you could not confirm the field takes effect on the runtime they
+  actually run.
+- **`Verdict` below is this file's prior opinion, not a field you record.** It used to be a per-row
+  field, and half its values duplicated `state` (`gap` ≈ `absent`, `correctly-absent` ≈
+  `absent_by_design`) while the other half — migrate / keep / delete / regress / stay — was
+  migration-shape opinion that belongs on a **suggestion**, where it has to carry a cost and a
+  `does_not_fix`. Read the column; do not copy it into the record.
 
-The full schema is in `/assess-agentcore-migration`. If this file and that schema disagree, the
-schema is authoritative and this file has drifted — say so.
+`record-schema.yaml` is the authoritative field list, and `record` validates against it — so a value
+this file describes but the schema does not accept cannot be written. If the two disagree, the schema
+is authoritative and this file has drifted; say so.
 
 ## This is a triage, not a Well-Architected review
 
@@ -85,7 +106,9 @@ So:
 
 `Correctly-absent` matters: forcing a deliberate absence into `Gap` manufactures a finding, and
 forcing it into `Keep` hides that it was considered. A single-turn service has no session store
-and needs none; a graph with no per-user data needs no retrieval ACL.
+and needs none; a graph with no per-user data needs no retrieval ACL. **In a receipt that
+distinction is `state: absent_by_design` versus `state: absent`** — same judgement, recorded where
+it can be argued with.
 
 `Regress` and `Stay` exist because without them the instrument can only ever conclude
 "migrate or neutral." If you never record one, suspect the instrument rather than the

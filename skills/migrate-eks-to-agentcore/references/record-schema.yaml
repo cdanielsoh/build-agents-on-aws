@@ -1,0 +1,218 @@
+# The receipt vocabulary — what a receipt may say, and about what.
+#
+# Why this is data and not prose: every enum here used to live in a schema comment inside
+# /assess-agentcore-migration, so a value could be misspelled, invented, or quietly dropped and
+# nothing noticed until a reader hit it. `lens_plan.py record` validates against this file, which
+# means an invalid receipt cannot be written rather than being caught at review time.
+#
+# lens-graph.yaml owns the WALK (which questions, which nodes, what each needs).
+# This file owns the VOCABULARY (what kinds of thing you may observe, and the legal values).
+#
+# `lens_plan.py selfcheck` checks this file against evidence.md and lens-graph.yaml. It cannot
+# check the gate ids against constraints.md, which names them in prose — if you add a Gate 0
+# check there, add its id here.
+
+# ── Evidence tags. Authoritative definitions and the source hierarchy: evidence.md ──────────
+evidence_tags:
+  - measured:customer
+  - measured:reference
+  - read:source
+  - read:cluster
+  - stated:customer
+  - verified
+  - docs
+  - reasoned
+  - open
+
+# Tags that assert an observation rather than an inference. A receipt carrying one of these must
+# also carry `source` — the command run or the artifact read. Without it the receipt asserts an
+# observation while recording no way to repeat it, which is the defect receipts exist to fix.
+tags_requiring_source:
+  - measured:customer
+  - measured:reference
+  - read:source
+  - read:cluster
+  - verified
+
+# ── Receipt kinds ───────────────────────────────────────────────────────────────────────────
+# `subject` is validated per kind. `state` is required where a state enum is given; `value` is
+# required where `takes_value: true`. Anything not listed for a kind is rejected, so a field
+# invented under context pressure fails at write time.
+kinds:
+
+  # An observation about one of the 41 Lens questions. The evidence unit.
+  question:
+    subject: question_id            # validated against lens-graph.yaml
+    state:
+      # Binary present/absent hid six real findings on a live assessment: a control that is
+      # thoroughly built and delivers nothing still reads as "present".
+      - present
+      - present_but_ineffective
+      # platform_provides asserts a WORKING guarantee. Not for something configured but
+      # unproven — that is present_but_ineffective with a defect_owner.
+      - platform_provides
+      - available_unconfigured
+      - absent
+      - absent_by_design
+      # Not findings about the customer. Conflating either with `absent` manufactures a gap.
+      - not_applicable
+      - unknown
+    optional:
+      - component                   # several rows may share a practice; this is what separates them
+      - ineffective_because
+      - defect_owner
+      - blocked_by_artifact         # names an `artifact` receipt; `blocks` is computed from these
+
+  # What would close a question, and whether you confirmed it takes effect. Separate from the
+  # question receipt because "their chart ships this field, unset, at values.yaml:210" is its own
+  # observation with its own evidence — which is what stops `closed_by` being an unsourced guess.
+  remedy:
+    subject: question_id
+    requires: [closed_by]
+    optional: [component, remedy_verified, requires_runtime_move]
+
+  # A check-graph node. Replaces the old hand-written `plan:` block: this records what actually
+  # happened, at the moment it happened, rather than declaring intent nothing reconciles.
+  node:
+    subject: node_id                # validated against lens-graph.yaml's `nodes:`
+    state: [done, unreachable, not_applicable]
+    optional: [blocked_by, substitute_used]
+
+  gate:
+    subject: gate_id
+    state:
+      # fail is not the only non-pass. Treating it that way turns cheap rebuilds into refusals.
+      - pass
+      - trivial_fix                 # a real gate a one-line change clears
+      - needs_redesign
+      - not_a_liftable_unit         # Gate 0.0 — reframes the engagement; does NOT skip Gate 2
+      - fail
+      - unknown
+    optional: [compute_type_assumed]
+
+  measurement:
+    subject: measurement_field
+    takes_value: true
+    optional: [source_of_value, is_true_high_water_mark, derived_from]
+
+  # One field of the topology read per receipt. `component` is what lets a multi-agent service
+  # give a per-edge answer, and lets a hybrid design record two values for one field — neither of
+  # which the old single-valued block could express.
+  topology:
+    subject: topology_field
+    takes_value: true
+    optional: [component]
+
+  # An artifact you needed and could not read. Often one cause behind many `unknown`s, which is
+  # why `blocks` is computed rather than remembered.
+  artifact:
+    subject: free_text
+    optional: [how_to_get_it]
+
+  # Facts about the engagement that gate what may be recommended at all.
+  context:
+    subject: context_field
+    takes_value: true
+
+# ── Subject vocabularies ────────────────────────────────────────────────────────────────────
+
+# Gate 0 checks. Prose definitions, cost to resolve and escape hatches: constraints.md.
+gate_ids:
+  liftable_unit:        "Gate 0.0 — is the agent a liftable unit at all?"
+  single_turn_duration: "one turn against the request timeout"
+  image_architecture:   "amd64-only dependency; an issue on microVMs, not on Instances"
+  image_size:           "over the cap. Any CUDA/ML base layer blows it alone"
+  gpu_local_inference:  "NOT a blocker — Instances supports GPU"
+  sidecars_required:    "restructure, or stay"
+  protocol_support:     "not HTTP / MCP / A2A / AG-UI"
+  concurrency_quota:    "session or creation-rate caps. Lead time, not a wall"
+  region_availability:  "probe live; published lists have been stale"
+  inbound_auth:         "in-app JWT / SigV4→JWT / none today / proxy-terminated mTLS"
+  vpc_resident_store:   "not a blocker, but forces VPC mode and a full endpoint set"
+
+# Where the numbers come from, and the billing floor to check first: measure.md.
+measurement_fields:
+  monthly_token_cost_estimate: usd
+  monthly_datastore_cost:      usd
+  monthly_conversations:        count      # the volume everything monthly multiplies by
+  # REQUIRED next to any compute verdict. It is a ratio over run rate, so at zero volume it is
+  # unsatisfiable and the honest receipt is tag `open`. No share means no compute verdict.
+  compute_share_of_run_rate:   pct
+  tokens_in_per_turn:          count
+  tokens_out_per_turn:         count
+  invocations_per_turn:        count
+  cpu_seconds_per_turn:        seconds
+  wall_seconds_per_turn:       seconds
+  # cgroup_memory_peak is the only true high-water mark and the quantity AgentCore bills on.
+  # Everything else is a sampled maximum, i.e. a FLOOR on the real peak — record
+  # is_true_high_water_mark: false and do not call it a peak. This is the field the worked
+  # supersession example in receipts.md corrects.
+  peak_memory_gb:              gb
+  turns_per_conversation:      count
+  # Endpoint cost is conditional on the VPC's egress design, not on the platform.
+  vpc_has_internet_egress:     bool
+  existing_nat_gateways:       count
+  existing_load_balancers:     count
+  existing_vpc_endpoints:      list
+
+# Classifying their session design: topologies.md.
+topology_fields:
+  detected:                 [A_stateless, B_sticky, single_turn]
+  work_unit:                [turn, job, document]      # set this FIRST; it gates the rest
+  request_isolation_risk:   [true, false, not_applicable, unknown]
+  concurrency_bound_by:     free_text                  # name it in whatever the stack calls it
+  concurrency_limit:        integer
+  limit_exceeds_peak:       [true, false, unknown]
+  flush_cadence:            [per_event, every_turn, every_n_turns, interval, on_evict, none]
+  # Name the EFFECT, not the mechanism. Two concurrent turns on one conversation is not a lost
+  # write but interleaved history, and no store-level fix addresses it.
+  concurrent_turn_safety:   [safe, serialized, last_write_wins, interleaved_history, unknown]
+
+context_fields:
+  engagement:     [customer, internal_reference, upstream_project]
+  # Decides whether a remedy is even actionable. On a third-party platform the remedies are chart
+  # config, an upstream PR or a fork — none of which is "redesign the service".
+  code_ownership: [customer_owned, third_party_oss, vendor_managed, mixed]
+
+# ── Enums used by optional fields ───────────────────────────────────────────────────────────
+enums:
+  ineffective_because:
+    # never_invoked is the severe class: exists, reads as present in review, zero call sites.
+    # fails_at_runtime: it IS invoked, it runs, and it throws every time.
+    [never_invoked, fails_at_runtime, partially_covers, misconfigured, unverifiable]
+  defect_owner: [customer, platform, operator_config, unknown]
+  closed_by:
+    # Non-AgentCore answers FIRST. An AgentCore-only enum forced 36 of 60 rows to `none` on a real
+    # assessment when most were one already-shipped platform field away.
+    [platform_config, customer_code, cluster_config, iam_policy, upstream_contribution,
+     gateway, policy, identity, memory, evaluations, observability,
+     code_interpreter, browser, runtime, none]
+  remedy_verified: [true, false, unverifiable]
+  compute_type_assumed: [microvm, instances]
+  source_of_value:
+    [cgroup_memory_peak, kubelet_stats_summary, container_insights, cgroup, host_cpus,
+     explicit, library_default, telemetry, unavailable, unknown]
+  supersede_reason:
+    # Keep these distinct. reinterpretation: same evidence, different conclusion, nobody
+    # re-observed. re-observation: we looked again; the world may have changed, or we misread it.
+    [reinterpretation, re-observation]
+  by: [assessor, customer, reviewer]
+
+# ── Authored artifacts. `validate` checks these; nothing generates them. ────────────────────
+suggestion_required_fields:
+  # Grounding is structural: a suggestion citing no findings, or no receipts, is invalid.
+  [id, change, closes, grounded_in, buys, does_not_fix, cost, confidence, requires_runtime_move]
+suggestion_confidence: [high, medium, low]
+
+decision_choices:
+  # There is deliberately no `undecided`. An undecided suggestion has NO entry, and `validate`
+  # reports it as undecided by absence — so a column of `undecided` can no longer read as
+  # "we asked and they never replied" on an engagement where nobody was ever asked.
+  proceed:  {}
+  declined: { requires: [reason] }
+  deferred: { requires: [reason, revisit_when] }
+
+outcomes:
+  # adopt_components is the most common honest answer and is not a lesser result. assess_only —
+  # findings delivered, nothing adopted yet — is a SUCCESS state, not a funnel that leaked.
+  [migrate, migrate_partially, adopt_components, assess_only, stay, redesign_first]

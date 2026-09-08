@@ -1,5 +1,5 @@
 ---
-description: Turn an AgentCore migration decision record into a phased plan plus scaffolding; makes no live changes
+description: Turn the customer's AgentCore migration decisions into a phased plan plus scaffolding; acts only on decisions and makes no live changes
 argument-hint: "[--record <path>] [--out <dir>] [--phase <n>]"
 allowed-tools: Bash, Read, Glob, Grep, Write, Edit
 ---
@@ -20,13 +20,57 @@ One honest exception to flag rather than hide: keeping one image serving both pl
 **does** require a change to the running EKS Deployment (see Step 3). Schedule it in Phase 0;
 do not perform it here.
 
-## Step 1 — Load and validate the record
+## Step 1 — Load the record, and act only on decisions
 
-Read `.agentcore-migration/decisions.yml`, or `--record`. If absent, stop and say to run
-`/assess-agentcore-migration` first — do not reconstruct it from conversation.
+Read all of `.agentcore-migration/`, or `--record` for a different directory. If it is absent, stop
+and say to run `/assess-agentcore-migration` first — do not reconstruct it from conversation.
 
-**`gate0` results, and what each means for planning.** Enumerate every entry; do not treat
-anything other than `pass` as fatal:
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lens_plan.py" validate
+```
+
+**Read everything. Act only on `decisions.yml`.**
+
+| Input | Use |
+|---|---|
+| `decisions.yml`, `choice: proceed` | **the only things that become plan items** |
+| `decisions.yml`, `choice: declined` | listed as **deliberately excluded**, with their reason. Never silently absent |
+| `decisions.yml`, `choice: deferred` | a "revisit when X" section, using `revisit_when`. Not a phase |
+| suggestions with **no** decision | undecided by absence. Name them as needing survey 2, and plan nothing |
+| `suggestions.yml` | the change, the cost, and `does_not_fix` — quote it rather than re-deriving |
+| `findings.yml` | evidence to cite, so the plan re-derives nothing |
+| `assessment.yml` | `triage.fix_first` is Phase 0 / R1; `cost_confidence` decides whether any phase gets a business case |
+| `access.yml` + blocked questions | what the plan's verification steps **cannot** confirm |
+| receipt timestamps | staleness, computed rather than judged |
+
+**Refuse if `decisions.yml` is missing or has no `decided_with`.** Then no survey 2 happened, and
+every "verdict" in the record is the assessor's own. `assessment.yml`'s `recommended_outcome` is not
+a substitute — it sits in the record looking authoritative, which is exactly why planning from it
+quietly reintroduces things the customer would have declined. Say what is missing and stop.
+
+**Two invariants, enforced rather than described.** `validate` fails on both, so a plan that violates
+them cannot pass the `Stop` hook:
+
+- **A plan item with no decision id is invalid.** Write `plan/items.yml` alongside `plan.md`, one
+  entry per item, each naming the decision it comes from. That is also what generates
+  `MANIFEST.md`'s reverse index.
+- **A suggestion with no finding ids is invalid** — so anything you plan is already grounded, and
+  citing the suggestion is enough.
+
+```yaml
+# .agentcore-migration/plan/items.yml
+items:
+  - { id: P-0.1, phase: 0, decision: D-01, title: set authz.serverSide=true,
+      artifacts: [scaffold/chart/values.yaml] }
+```
+
+**Staleness is now computation, not judgement.** `validate` reports when `findings.yml` is older than
+the newest receipt, and when a decision rests on a receipt that has since been superseded. Read both
+before planning: a `deferred` decision taken against a measurement that was later reinterpreted may
+have been the right answer to the wrong number.
+
+**`findings.yml`'s `gates:` block, and what each result means for planning.** Enumerate every entry;
+do not treat anything other than `pass` as fatal:
 
 | `result` | Plan accordingly |
 |---|---|
@@ -45,39 +89,40 @@ rebuild, a pin, or a config change, treat it as `trivial_fix`, plan it into Phas
 that the record used the wrong value. Refuse only where the remedy is a platform capability the
 customer cannot supply.
 
-Also check `gate0[].compute_type_assumed`. GPU, architecture and session duration differ
+Also check each gate's `compute_type_assumed`. GPU, architecture and session duration differ
 between microVMs and Instances, so a `fail` gated against microVMs may be a `pass` on
 Instances. If the record does not say, treat the gate as `unknown`.
 
-Refuse, and say why, if `recommendation` is `stay` (unless explicitly overridden, which goes in
-`dissent`). `redesign_first` is **not** a refusal — it selects a different plan; see Step 2b.
+Refuse, and say why, if `decisions.yml`'s `outcome` is `stay` (unless explicitly overridden — record
+that override as a decision, not as prose). `redesign_first` is **not** a refusal — it selects a
+different plan; see Step 2b.
+
+**Where `assessment.yml`'s `recommended_outcome` and `decisions.yml`'s `outcome` differ, the
+customer's wins, and say so at the top of the plan.** That divergence is the most useful line in the
+document: it is a disagreement recorded rather than argued, and it tells whoever reads the plan later
+which parts were ours and which theirs.
 
 **Check the record against the current instrument, not just against the system.** Records go
 stale two ways. Compare its schema to the current
 [record-and-adopt.md](../skills/migrate-eks-to-agentcore/references/record-and-adopt.md) — which
-owns the confidence axes and the adoption-path rules — and to the
-`/assess-agentcore-migration` template, and note divergences at the top of the plan. Observed:
-a record carrying a single `confidence` field and quoting a rubric line that no longer exists,
-written weeks after the reference split it into two axes. A stale field silently reintroduces
-the reasoning error the split was made to prevent — so echoing content back does not catch it.
+owns the confidence axes and the suggestion rules — and to
+[record-schema.yaml](../skills/migrate-eks-to-agentcore/references/record-schema.yaml), and note
+divergences at the top of the plan. Observed: a record carrying a single `confidence` field and
+quoting a rubric line that no longer exists, written weeks after the reference split it into two
+axes. `validate` catches enum and reference drift; it cannot catch a *field* that no longer means
+what it used to, so read as well as run it.
 
 **Read `recommendation_confidence` and `cost_confidence` separately.** With
 `cost_confidence: unavailable`, every cost statement in the plan is marked unestablished and no
 phase gets a business case. That does not weaken a `recommendation_confidence: high`.
 
-**Check the customer actually engaged with the record.** If every `customer_agrees` is
-`undecided` and `dissent` is empty, the customer has confirmed nothing — say so at the top of
-the plan and treat every verdict as provisional. That is the stale-record condition, and it is
-common.
+Echo back `context`, `topology`, `work_unit`, the decision counts by choice, and the
+deliberately-excluded list, so a stale record is caught before it produces a plan.
 
-Echo back topology, `work_unit`, verdict counts, any `regress`, and dissent, so a stale record
-is caught before it produces a plan.
-
-**Read the fields the schema does not define.** Assessors add blocks of their own —
-free-text rationale, a critique of the assessment itself, notes hung off `lens_coverage`.
-Observed: a record whose sharpest planning input was a comment inside another field, and one
-whose Phase-0 list existed only inside the `recommendation` prose. Skipping what the template
-does not name loses exactly the parts the assessor thought worth writing by hand.
+**Read the fields the schema does not define.** Assessors add blocks of their own — free-text
+rationale, a critique of the assessment itself, notes hung off a finding. Observed: a record whose
+sharpest planning input was a comment inside another field. Skipping what the template does not name
+loses exactly the parts the assessor thought worth writing by hand.
 
 ## Step 2 — Order the work by reversibility
 
@@ -97,8 +142,9 @@ existing stored data unreadable by the old code — turning on encryption at res
 serialization format — that patch reverts last.** Rolling it back first orphans every row written
 while it was live.
 
-**Phase 0 — fixes worth making regardless.** Read the record's own Phase-0 / fix-first entries
-and order them by severity. Do **not** work from a generic checklist: on real records, half the
+**Phase 0 — fixes worth making regardless.** Take `assessment.yml`'s `triage` entries with
+`fix_first: true` and order them by `severity`. Every one still needs a `proceed` decision to become
+a plan item — `fix_first` says *when*, not *whether*. Do **not** work from a generic checklist: on real records, half the
 standard items are structurally inapplicable (there is no event loop to unblock, no store to
 race), and the highest-value items are service-specific. Two that are easy to miss and often
 top the list:
@@ -174,8 +220,8 @@ says so:
 
 | | Phase | Exit criterion |
 |---|---|---|
-| **R0** | Recover missing artifacts and get the record reviewed | every `missing_artifacts` entry resolved or declared permanent; `customer_agrees` no longer uniformly `undecided` |
-| **R1** | Close what is exploitable today | each `severity: high` gap has a merged patch. Pin dependencies **first** — until the build is reproducible, no later phase is a controlled experiment |
+| **R0** | Recover missing artifacts and get the record decided | every `findings.yml` `missing_artifacts` entry resolved or declared permanent; `decisions.yml` exists with a `decided_with` |
+| **R1** | Close what is exploitable today | each `triage` entry at `severity: high` with a `proceed` decision has a merged patch. Pin dependencies **first** — until the build is reproducible, no later phase is a controlled experiment |
 | **R2** | Make it measurable | the four Gate 2 numbers land in telemetry, from the running service |
 | **R3** | Make it verifiable | a golden set drawn from R2's logged turns, wired as a CI gate |
 | **R4** | Forward-compatible changes only | things that improve the service now *and* the migration later — ARM64, an arm64 NodePool, structured logging |
@@ -218,11 +264,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.py" /tmp/ref --template strands-
 Note the template puts its entrypoint *inside* a package, which is why the naming trap below
 does not bite it.
 
-Scaffold for components the record marks `migrate` or `migrate_plus`. **Under `redesign_first`,
-scaffold across `gap` rows too** — that verdict means most of the work *is* the gaps, and a
-`migrate`-only filter would skip "no tool authorization exists" and "no instrumentation exists",
-the second of which gates Gate 2 by construction. Write to new paths; never overwrite working
-files.
+**Scaffold for decisions with `choice: proceed`, and for nothing else.** Under `redesign_first`
+that will be mostly suggestions closing `absent` findings rather than runtime work — which is
+correct: there, most of the work *is* the gaps, and "no tool authorization exists" and "no
+instrumentation exists" are the items that matter, the second of which gates Gate 2 by construction.
+Write to new paths; never overwrite working files.
 
 - **AgentCore entrypoint** — reuse their existing agent construction unchanged; the point is
   that only the surface differs. **That thesis fails for a multi-agent service**, and it fails
@@ -277,33 +323,51 @@ files.
 
 ## Step 4 — Write the plan
 
-Write to `--out` if given, else `.agentcore-migration/`. Use a fixed layout so outputs are
-comparable across engagements:
+Write to `--out` if given, else `.agentcore-migration/plan/` — a subdirectory, so the six record
+files stay one writer each and the plan is visibly downstream of them. Use a fixed layout so outputs
+are comparable across engagements:
 
 ```
 <out>/plan.md              the phased plan
+<out>/items.yml            one entry per plan item, each naming its decision. `validate` reads this
 <out>/scaffold/            generated files, mirroring the target repo layout
 <out>/scaffold/MANIFEST.md both indexes, below
 ```
 
+**`plan.md` needs two sections that are not phases, and leaving them out is what made earlier plans
+read as a funnel:**
+
+- **Deliberately excluded.** Every `choice: declined` decision, with the customer's reason in their
+  words. A plan that silently omits what was refused reads as if nothing was — and it loses the one
+  direction a human revisiting actually asks about, which is *why didn't we do that?*
+- **Revisit when.** Every `choice: deferred` decision with its `revisit_when` condition. Not a phase,
+  because it has no start date; a condition, because that is what they actually said.
+
+If `outcome` is `assess_only`, both of those sections *are* the plan, plus whatever `fix_first`
+triage the customer accepted. Say that plainly rather than padding it into phases: findings
+delivered and nothing adopted yet is a complete and successful result.
+
 **`MANIFEST.md` needs the reverse index, not just the forward one.** Artifact → record line
 catches invention. It cannot catch *omission* — and omission is the failure that actually
-happened: one plan left three `gap` rows and the single `migrate` row untouched, and skipped a
+happened: one plan left three gap rows and the single migrate row untouched, and skipped a
 `severity: high` finding entirely, while its summary claimed thirteen high-severity findings
-closed. Nothing in the artifact list was wrong; the list simply ended.
+closed. Nothing in the artifact list was wrong; the list simply ended. `validate` now catches the
+inverse — a plan item with no decision — but only this table catches a decision with no plan item.
 
 So require both directions, and make the second one exhaustive:
 
 | Index | Row per | Catches |
 |---|---|---|
 | artifact → record line | each generated file | scaffolding invented from imagination |
-| **record row → artifact, or "not addressed, because …"** | **every `gap`, `migrate` and `migrate_plus` row in the record** | silent omission |
+| **decision → artifact, or "not addressed, because …"** | **every decision with `choice: proceed`** | silent omission |
+| **declined and deferred → the reason** | every other decision | a plan that reads as if nothing was refused |
 
 Every row of the second table needs one of the two. "Not addressed" is a fine answer —
 "blocked on Q1", "the customer's working file", "no build definition exists in this repo" — and
 writing it turns a gap in the plan into a decision the customer can overrule. Then count: if the
 plan claims *n* findings closed, that number must be derived from this table, not from the
-record's severity totals.
+record's severity totals. `plan/items.yml` is the machine-readable half of the same thing, and
+`validate` reads it: generate this table from that file rather than assembling it by hand.
 
 `MANIFEST.md` replaces any interactive diff review: in a non-interactive run there is no
 "before" to diff against, so the auditable artifact is a list of what was written and why.

@@ -32,9 +32,15 @@ something. Everything *derivable* stays derivable; do not ask about architecture
 | S5 | May we generate load, and against what? | A concurrency sweep is load on a live service. Same consent class as S4, and more intrusive |
 | S6 | Who can answer product questions — retention needs, conversation end, compliance, on-call? | If nobody, Gate 3 is structurally unavailable and should say so rather than sitting `undecided` |
 
-Record the answers verbatim in the record's `access` block before doing anything else. If the
+Record the answers verbatim in `.agentcore-migration/access.yml` before doing anything else. If the
 customer cannot answer one, that is itself an answer — record `unknown` and treat the gated checks
 as unreachable.
+
+**Two of these answers are enforced, not advisory.** `invocation_permitted` and
+`load_generation_permitted` are read by a `PreToolUse` hook, which blocks the matching commands
+until the file says yes. Writing the permission down is what makes acting on it auditable — and the
+failure that motivates it happened: invocation was made a mandatory step and performed without
+asking anyone.
 
 **A survey is not a questionnaire about their architecture.** If you find yourself asking what their
 session store is, stop: that is derivable, and asking it is the thing that costs trust.
@@ -115,6 +121,11 @@ in exactly one state:
 **Each node points at exactly one reference.** If a node needs two files to perform, the split is
 wrong — say so rather than working around it.
 
+This table is the prose version. The machine-readable one is `nodes:` in
+[lens-graph.yaml](lens-graph.yaml), which is what `resolve` walks and what `record --node`
+validates against. `lens_plan.py selfcheck` asserts the two agree on the node ids and on the file
+per node, because a table in one file and a graph in another have drifted in this project before.
+
 | Node | Needs | Read | If unreachable, substitute |
 |---|---|---|---|
 | **A** shape: coded, declarative, or managed | S1 or S2 | [read-the-shape.md](read-the-shape.md) | none — if you have neither source nor control plane, say the assessment is not possible and stop |
@@ -133,45 +144,79 @@ wrong — say so rather than working around it.
 | **J** Gate 3 product questions | S6 = someone to ask | [ask.md](ask.md) | `engagement: internal_reference`; record the questions as `open_questions`, not as `undecided` rows |
 | **K** record and adoption path | G | [record-and-adopt.md](record-and-adopt.md) | — |
 
-Cross-cutting, so not a node: [evidence.md](evidence.md) governs how every one of the above tags
-what it found, and [provenance.md](provenance.md) says which of this plugin's own claims are
-measured.
+Cross-cutting, so not nodes: [evidence.md](evidence.md) governs how every one of the above tags
+what it found, [receipts.md](receipts.md) governs how each one records it, and
+[provenance.md](provenance.md) says which of this plugin's own claims are measured.
 
-### Two properties worth preserving if this is ever restructured
+### Three properties worth preserving if this is ever restructured
 
-**Unreachable is recorded, not inferred.** Every node that did not run appears in the record with
-its blocker. A reader can then tell "this control is missing" from "we were not allowed to look",
-which is the difference between a finding and an omission.
+**Unreachable is recorded, not inferred.** Every node that did not run has a receipt naming its
+blocker. A reader can then tell "this control is missing" from "we were not allowed to look", which
+is the difference between a finding and an omission.
 
 **Consent gates are explicit edges, not prose.** F and I depend on S4 and S5. That is why an
 assessor cannot reach them by enthusiasm, and why refusing them costs the findings named in the
-substitute column rather than silently producing a thinner record that looks complete.
+substitute column rather than silently producing a thinner record that looks complete. A hook now
+enforces both edges against `access.yml`.
 
-## Step 3 — Emit the plan before walking it
+**Intent is computed; only what happened is stored.** Anything that records the *plan* in a file
+becomes a claim nobody checks. `resolve` derives the intended walk from the graph and the survey
+every time it is asked; receipts hold the actual one. If a future version reintroduces a stored
+plan, it will reintroduce "done on all 15 nodes, unverifiable" with it.
 
-Write the graph state into the record up front, so the shape of the assessment is visible before any
-conclusion is:
+## Step 3 — Write the survey down, then let the graph compute the walk
+
+Write **only** the survey answers, to `.agentcore-migration/access.yml`:
 
 ```yaml
-access:                      # verbatim survey answers
+service: <name>
+account: <id>
+region: <region>
+depth: quick | full
+surveyed_at: <iso8601>
+surveyed_with: <name or role>          # absent means nobody was asked and access was assumed
+access:
   source_available: true | false | unknown
   source_matches_deployment: true | false | unknown
   control_plane_read: true | false
   account_is_customers: true | false
   deployment_exists: true | false
   carries_real_traffic: true | false | unknown
-  invocation_permitted: true | false | unknown      # S4
+  invocation_permitted: true | false | unknown      # S4 — also read by the PreToolUse consent hook
   invocation_environment: production | staging | pilot | none
   load_generation_permitted: true | false | unknown # S5
   product_owner_reachable: true | false             # S6
-
-plan:                        # one entry per node above
-  - node: F
-    state: done | unreachable | not_applicable
-    blocked_by: S4            # required when unreachable
-    substitute: <what you did instead, or none available>
 ```
 
-An assessor who writes this first cannot later mistake an unasked question for an answered one, and
-a customer reading it can see exactly what their access decisions cost them — which is often the
-most actionable thing in the document.
+Then:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lens_plan.py" resolve --multi-agent yes|no|unknown
+```
+
+**Do not write the intended walk into a file.** Earlier versions had a `plan:` block listing every
+node with `state: done | unreachable | not_applicable`, written up front. It was a stored copy of
+what `resolve` already computes, and it failed two ways at once: it went stale when access changed,
+and an assessor could write `done` on all 15 nodes with nothing to contradict it. That is the same
+"assertion that cannot fail" defect this instrument documents in other people's work.
+
+So the intent is `resolve`, computed on demand and never stored. **What actually happened is a node
+receipt, written when it happens:**
+
+```bash
+lens_plan.py record --node B --state done \
+    --tag read:cluster --evidence "3 swallowed exceptions in the tool dispatch path" \
+    --source "kubectl logs -n copilot deploy/copilot --since 24h"
+
+lens_plan.py record --node F --state unreachable --blocked-by S4 \
+    --substitute-used "the tool server's own logs plus stored session rows" \
+    --tag open --evidence "invocation refused at kickoff"
+```
+
+`lens_plan.py status` reconciles the two and prints the frontier: what is reachable, minus what has
+a receipt. That is what a resumed session needs, and it is what the `SessionStart` hook prints. The
+full mechanism, and how a correction works, is in [receipts.md](receipts.md).
+
+A customer reading the resolved walk can see exactly what their access decisions cost them — often
+the most actionable thing in the document. A customer reading the node receipts can see what was
+actually done, which is a different and previously unavailable claim.
