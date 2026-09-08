@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """The assessment's set arithmetic and referential integrity. Judgement stays with the model.
 
-Six subcommands, and the division between them and the assessor is deliberate:
+Eight subcommands, and the division between them and the assessor is deliberate:
 
     resolve     graph + access  →  which of the 41 questions and 15 nodes are reachable
     record      append one observation to receipts.jsonl, validated, timestamped
     status      the frontier — what resolve says is reachable, minus what has a receipt
     findings    receipts → findings.yml, applying the supersedes chain
     validate    referential integrity across the six artifacts. NEVER fails on coverage
+    phases      plan graph + record  →  which plan phases are executable   (used by /plan)
+    manifest    items.yml + receipts → MANIFEST.md, both indexes           (used by /plan)
     selfcheck   the instrument itself: do the graph, the schema and the prose still agree?
 
 A step belongs here when the reason is that a model under context pressure will skip it — not
@@ -37,6 +39,7 @@ import json
 import pathlib
 import re
 import sys
+import textwrap
 
 try:
     import yaml
@@ -423,7 +426,14 @@ def cmd_record(a, graph: dict, schema: dict) -> int:
         if isinstance(rec.get("artifacts"), str):
             rec["artifacts"] = [p.strip() for p in rec["artifacts"].split(",") if p.strip()]
         if a.value is not None:
-            rec["value"] = coerce(a.value)
+            # `coerce` turns "none" into Python None, which is right for a free number or a boolean
+            # and wrong for an enum whose legal value is the STRING "none". flush_cadence already
+            # had that value, so `--value none` was silently unwritable before this: the receipt was
+            # rejected as "must be one of: ..., none, ..." while none was visibly in the list.
+            # An enum wins over the general rule.
+            legal = schema["topology_fields"].get(subject) if kind == "topology" else None
+            rec["value"] = a.value if isinstance(legal, list) and a.value in [str(v) for v in legal] \
+                else coerce(a.value)
         if a.by:
             rec["by"] = a.by
         pending.append(rec)
@@ -882,6 +892,159 @@ def cmd_validate(a, graph: dict, schema: dict) -> int:
     return 1 if errors else 0
 
 
+# ── phases ──────────────────────────────────────────────────────────────────────────────────
+#
+# The plan's preconditions, computed. Every one of these was a bold warning inside 450 lines of
+# prose, which is the arrangement we already know does not hold: the assessment side lost steps
+# exactly this way before the check graph existed.
+#
+# Each predicate returns True, False, or None for unknown. The three are genuinely different and
+# collapsing unknown into False is the specific error that turns "we could not check" into a claim
+# about the customer — the same conflation that made `unreachable` read as `absent`.
+
+PLAN_GRAPH_PATH = REFS / "plan-graph.yaml"
+GATE2_FIELDS = ("cpu_seconds_per_turn", "wall_seconds_per_turn", "peak_memory_gb",
+                "turns_per_conversation")
+
+
+def load_plan_graph() -> dict:
+    return yaml.safe_load(PLAN_GRAPH_PATH.read_text())
+
+
+def _tri(v):
+    """access.yml carries true/false/unknown; unknown must not read as false."""
+    return None if v in (None, "unknown", "") else bool(v)
+
+
+def compute_predicates(d: pathlib.Path, access: dict) -> dict[str, bool | None]:
+    decisions_doc = load_yaml(d / "decisions.yml") or {}
+    decisions = decisions_doc.get("decisions") or []
+    effective, _ = split_supersession(load_receipts(d))
+    # load_access already unwraps the `access:` block, so this is the flat mapping. Reaching for
+    # access["access"] here returned nothing and read every survey answer as unknown — which
+    # degraded four phases on a record that had answered all of them.
+    acc = access or {}
+
+    def latest_of(kind: str) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for r in effective:
+            if r.get("kind") == kind:
+                out[r["subject"]] = r
+        return out
+
+    q, gates = latest_of("question"), latest_of("gate")
+    meas, topo = latest_of("measurement"), latest_of("topology")
+
+    def q_present(qid: str):
+        r = q.get(qid)
+        if r is None or r.get("state") == "unknown":
+            return None
+        return r["state"] in ("present", "platform_provides")
+
+    lift = gates.get("liftable_unit")
+    mp = topo.get("mirroring_point")
+    schema_gates = set(load_schema()["gate_ids"])
+
+    return {
+        "record_decided": bool(decisions_doc.get("decided_with")),
+        "has_proceed": any(x.get("choice") == "proceed" for x in decisions),
+        "gates_evaluated": bool(gates) and schema_gates <= set(gates)
+                           and not any(g.get("state") == "unknown" for g in gates.values()),
+        "liftable": None if lift is None else lift.get("state") != "not_a_liftable_unit",
+        "build_reproducible": q_present("AGENTSUS02"),
+        "deployment_exists": _tri(acc.get("deployment_exists")),
+        "measurable": all(f in meas for f in GATE2_FIELDS),
+        "golden_set_exists": q_present("AGENTOPS06"),
+        "tool_inventory_known": None if "AGENTOPS04" not in q
+                               else q["AGENTOPS04"].get("state") != "unknown",
+        "mirroring_point": None if mp is None or mp.get("value") == "unknown"
+                           else mp.get("value") != "none",
+        "can_invoke": _tri(acc.get("invocation_permitted")),
+        "can_load": _tri(acc.get("load_generation_permitted")),
+        "owner_named": _tri(acc.get("product_owner_reachable")),
+        "single_component": None if "detected" not in topo
+                            else topo["detected"].get("value") == "single_turn",
+    }
+
+
+def resolve_phases(pg: dict, preds: dict, outcome: str | None) -> dict[str, dict]:
+    """Fixed point over `after`, so a phase whose predecessor is blocked cannot read executable."""
+    state: dict[str, dict] = {}
+    phases = pg["phases"]
+    for _ in range(len(phases) + 1):
+        for pid, spec in phases.items():
+            allowed = (spec.get("only_if") or {}).get("outcome")
+            if allowed and outcome and outcome not in allowed:
+                state[pid] = {"state": "not_applicable",
+                              "why": f"outcome is `{outcome}`, this phase is for {'/'.join(allowed)}"}
+                continue
+            if allowed and not outcome:
+                state[pid] = {"state": "degraded", "why": "decisions.yml names no outcome, so the "
+                                                          "track is a guess"}
+                continue
+            false_needs = [n for n in spec.get("needs") or [] if preds.get(n) is False]
+            unknown_needs = [n for n in spec.get("needs") or [] if preds.get(n) is None]
+            blocked_after = [p for p in spec.get("after") or []
+                             if state.get(p, {}).get("state") == "blocked"]
+            if false_needs:
+                state[pid] = {"state": "blocked", "why": "false: " + ", ".join(false_needs),
+                              "unmet": " ".join((spec.get("unmet") or "").split())}
+            elif blocked_after:
+                state[pid] = {"state": "blocked",
+                              "why": f"depends on {', '.join(blocked_after)}, which is blocked"}
+            elif unknown_needs:
+                # No `unmet` here on purpose. `unmet` explains a predicate that is FALSE, and
+                # printing it against an unknown told the reader the wrong story — a phase degraded
+                # because nobody answered S3 was shown the text about unevaluated gates.
+                state[pid] = {"state": "degraded", "why": "unknown: " + ", ".join(unknown_needs),
+                              "assume": "state each unknown as a named assumption with the "
+                                        "consequence if it is wrong, and say who can settle it"}
+            else:
+                soft = [n for n in spec.get("degraded_if") or [] if preds.get(n) is not True]
+                state[pid] = ({"state": "degraded", "why": "assumption: " + ", ".join(soft)}
+                              if soft else {"state": "executable", "why": ""})
+    return state
+
+
+def cmd_phases(a, graph: dict, schema: dict) -> int:
+    d = a.dir
+    pg = load_plan_graph()
+    access = load_access(pathlib.Path(a.access) if a.access else d / "access.yml")
+    preds = compute_predicates(d, access)
+    outcome = a.outcome or (load_yaml(d / "decisions.yml") or {}).get("outcome")
+    state = resolve_phases(pg, preds, outcome)
+
+    if a.format == "yaml":
+        print(yaml.safe_dump({"outcome": outcome, "predicates": preds, "phases": state},
+                             sort_keys=False, default_flow_style=False))
+        return 0
+
+    print(f"── plan phases ── outcome: {outcome or 'UNSET'}")
+    print("\npredicates (unknown is not false — it degrades a phase, it does not block it):")
+    for k, v in preds.items():
+        print(f"  {'true ' if v is True else 'FALSE' if v is False else '  ?  '}  {k}")
+    order = {"executable": 0, "degraded": 1, "blocked": 2, "not_applicable": 3}
+    print()
+    for pid, spec in pg["phases"].items():
+        st = state[pid]
+        print(f"  {pid:3} {st['state']:15} {spec['title']}")
+        if st.get("why"):
+            print(f"        └─ {st['why']}")
+        for extra in ("unmet", "assume"):
+            if st.get(extra):
+                print(textwrap.fill(st[extra], 94, initial_indent=" " * 11,
+                                    subsequent_indent=" " * 11))
+    counts: dict[str, int] = {}
+    for st in state.values():
+        counts[st["state"]] = counts.get(st["state"], 0) + 1
+    print("\n" + ", ".join(f"{k} {counts[k]}" for k in sorted(counts, key=lambda x: order.get(x, 9))))
+    print("\nWrite plan items only for phases that are `executable` or `degraded`. A `degraded` phase")
+    print("is planned with its unknown stated as a named assumption and a consequence if it is")
+    print("wrong — not silently, which is what prose produced. `blocked` phases go in the plan as")
+    print("what is not available and why. Nothing here is a finding about the customer.")
+    return 0
+
+
 # ── manifest ────────────────────────────────────────────────────────────────────────────────
 
 VERIFIED_LABEL = {
@@ -1030,6 +1193,34 @@ def cmd_selfcheck(a, graph: dict, schema: dict) -> int:
     if missing:
         bad.append(f"tags in record-schema.yaml with no row in evidence.md: {sorted(missing)}")
 
+    # The plan graph. A predicate named in a phase's `needs` with no implementation would resolve as
+    # unknown and quietly degrade the phase — a checker that reports "we could not tell" about
+    # something nobody ever tried to tell. That is worse than a crash, so it is checked here.
+    pg = load_plan_graph()
+    declared = set(pg["predicates"])
+    implemented = set(compute_predicates(pathlib.Path("/nonexistent"), {}))
+    if declared - implemented:
+        bad.append(f"predicates declared in plan-graph.yaml with no implementation in "
+                   f"compute_predicates: {sorted(declared - implemented)}")
+    if implemented - declared:
+        bad.append(f"predicates implemented but undocumented in plan-graph.yaml: "
+                   f"{sorted(implemented - declared)}")
+    used_p: set[str] = set()
+    for spec in pg["phases"].values():
+        used_p |= set(spec.get("needs") or []) | set(spec.get("degraded_if") or [])
+    if used_p - declared:
+        bad.append(f"phases reference undeclared predicates: {sorted(used_p - declared)}")
+    if declared - used_p:
+        bad.append(f"predicates declared but used by no phase: {sorted(declared - used_p)}")
+    outcomes = set(schema["outcomes"])
+    for pid, spec in pg["phases"].items():
+        for o in (spec.get("only_if") or {}).get("outcome") or []:
+            if o not in outcomes:
+                bad.append(f"phase {pid}: only_if outcome `{o}` is not in record-schema.yaml")
+        for dep in spec.get("after") or []:
+            if dep not in pg["phases"]:
+                bad.append(f"phase {pid}: after `{dep}`, which is not a phase")
+
     for line in bad:
         print(f"ERROR  {line}")
     if not bad:
@@ -1134,6 +1325,12 @@ def main() -> int:
 
     v = sub.add_parser("validate", help="referential integrity. Never fails on coverage")
     v.set_defaults(fn=cmd_validate)
+
+    p = sub.add_parser("phases", help="plan graph + record → which phases are executable")
+    p.add_argument("--access")
+    p.add_argument("--outcome", help="override decisions.yml's outcome, to see another track")
+    p.add_argument("--format", choices=["text", "yaml"], default="text")
+    p.set_defaults(fn=cmd_phases)
 
     m = sub.add_parser("manifest", help="items.yml + receipts → plan/scaffold/MANIFEST.md")
     m.add_argument("--out", help="plan directory, if /plan wrote it outside .agentcore-migration")

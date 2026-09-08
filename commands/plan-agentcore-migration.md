@@ -98,7 +98,7 @@ do not treat anything other than `pass` as fatal:
 | `trivial_fix` | a Phase 0 line item (e.g. an amd64 pin). **Not** a refusal |
 | `needs_redesign` | plan the redesign as its own phase, and cost it before Phase 1 |
 | `fail` | refuse **only if the remedy is a platform capability the customer cannot supply.** If the remedy is a rebuild, a pin or a config change, it is a `trivial_fix` mis-recorded — see below |
-| `unknown`, resolvable by you | **do not plan past Phase 0.** An unevaluated gate is not a passed gate — name what would resolve it, and resolve it |
+| `unknown`, resolvable by you | **do not plan past Phase 0.** An unevaluated gate is not a passed gate — name what would resolve it, and resolve it. `phases` enforces this: any `unknown` gate makes `gates_evaluated` false, which blocks P1 and cascades |
 | `unknown`, needs a Gate 3 answer | plan on, with the gate as a named assumption and a stated consequence if it is wrong. Quota headroom needs their request volume; nothing in a repo answers it, so blocking here would block every repo-only assessment |
 
 **Read `fail` against the remedy, not the word.** Records written before `trivial_fix` existed —
@@ -144,10 +144,42 @@ rationale, a critique of the assessment itself, notes hung off a finding. Observ
 sharpest planning input was a comment inside another field. Skipping what the template does not name
 loses exactly the parts the assessor thought worth writing by hand.
 
-## Step 2 — Order the work by reversibility
+## Step 2 — Resolve which phases are available, then order them
 
-Cheap and reversible first. Each phase must be independently valuable, so the customer can stop
-after any of them and still be better off.
+**Run this before writing any phase:**
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lens_plan.py" phases
+```
+
+It resolves [plan-graph.yaml](../skills/migrate-eks-to-agentcore/references/plan-graph.yaml) against
+the record and the survey, and prints each phase in one of four states. The preconditions below used
+to be bold warnings inside this file, which is the arrangement we already know does not hold — the
+assessment side lost steps exactly that way until the check graph existed, and there is no reason
+the same prose behaves differently here.
+
+| State | What to write |
+|---|---|
+| `executable` | the phase, normally |
+| `degraded` | the phase, **with each unknown named as an assumption and its consequence if wrong** — plus who can settle it |
+| `blocked` | not a phase. A section saying what is unavailable and why. The `unmet` text is the argument |
+| `not_applicable` | nothing. The outcome selected a different track |
+
+`degraded` is the state prose had no vocabulary for, and its absence is why an unverifiable phase
+read identically to a verified one. **Unknown is not false.** A phase degraded because nobody
+answered S3 is not the same claim as one blocked because the mirroring point is `none`, and
+collapsing the two is the conflation that turned `unreachable` into `absent` on the assessment side.
+
+Two things the resolver decides that were previously left to memory:
+
+- **`blocked` cascades.** P2 cannot read executable when P1 is blocked, so "do not plan past Phase 0
+  while a gate is `unknown`" is enforced rather than remembered.
+- **The track is selected by `outcome`.** Under `redesign_first` or `stay`, P0–P4 resolve
+  `not_applicable` and R0–R5 become the plan. Use `--outcome` to see the other track before
+  committing to one.
+
+Then order what remains. Cheap and reversible first. Each phase must be independently valuable, so
+the customer can stop after any of them and still be better off.
 
 **Reversibility only discriminates once infrastructure is involved, so carry a tie-break.** On a
 single-service plan every phase is `git revert` plus the previous image tag — minutes, no data
@@ -208,6 +240,11 @@ ClusterIP service with no ingress and no mesh — typical of internal tools — 
 mirror from. Then Phase 2 relocates into the *caller*, which may be a different repo and a
 different team. Say that rather than writing a phase nobody can execute.
 
+This is now a recorded fact rather than a thing to remember: the answer is a `topology`
+receipt on `mirroring_point` (`ingress`, `service_mesh`, `sidecar`, `caller`, `none`, `unknown`),
+and `phases` blocks P2 when it is `none`. Until that field existed the command asked for the answer
+and the record had nowhere to put it, so the phase got written regardless.
+
 **Phase 3 — cutover.** Customer-driven, on their sign-off.
 
 **With more than one component, cutover has an order and a steady state, and both need writing
@@ -221,8 +258,10 @@ it passes through.** Two rules that make per-component rollback actually indepen
   be reverted without stranding anything.
 
 **Do not start Phase 3 without a numeric rollback trigger.** Error rate, p95, cost/day, and the
-name of who pulls it. If those are `open` in the record, say plainly that Phase 3 cannot begin
-until they are set — a phase with no abort condition should not start.
+name of who pulls it. A threshold needs current numbers to be a threshold *against*, which is why
+`phases` gates P3 on `measurable` and `owner_named` — if either is false the phase resolves
+`blocked`, and the honest output is that Phase 3 cannot begin until they are set. A phase with no
+abort condition should not start.
 
 Scale in-flight advice to `work_unit`. If a unit of work is one request, there are no in-flight
 *conversations* to drain and the pin-existing-sessions advice is a non-question — drop it
@@ -498,7 +537,11 @@ agent loads at construction, producing a runtime that reaches READY and 500s on 
 the exact failure the rest of the plan is written to prevent. Synthesize, list the staged
 context, and confirm every non-`.py` file the code opens is in it.
 
-**Phase 1 compares against the EKS service, so confirm the EKS service starts.** If the image
+**Phase 1 compares against the EKS service, so confirm the EKS service starts.** `phases` gates P1
+on `deployment_exists` for this reason, and degrades it on `can_invoke` — producing the answers to
+compare against means sending the existing service requests, which is S4 and may well be refused.
+If it is, P1 still belongs in the plan; the comparison is just somebody else's to run, and the plan
+should say so rather than implying we did it. If the image
 cannot be built or the entrypoint does not exist — common, and itself a finding — Phase 1 has no
 baseline and its exit criterion is unmeetable. Say that instead of writing the comparison step.
 

@@ -197,6 +197,13 @@ topology_fields:
   # Name the EFFECT, not the mechanism. Two concurrent turns on one conversation is not a lost
   # write but interleaved history, and no store-level fix addresses it.
   concurrent_turn_safety:   [safe, serialized, last_write_wins, interleaved_history, unknown]
+  # Where traffic could be mirrored from, which is the precondition for the whole shadow-traffic
+  # phase. The plan command already required naming it and treating "there isn't one" as a real
+  # outcome; there was nowhere in the record to put the answer, so the phase got written anyway.
+  # `caller` means possible but not here: the mirror belongs in whatever calls this, which may be
+  # a different repo and a different team. `none` is common — a ClusterIP with no ingress and no
+  # mesh has nowhere to mirror from at all.
+  mirroring_point:          [ingress, service_mesh, sidecar, caller, none, unknown]
 
 context_fields:
   engagement:     [customer, internal_reference, upstream_project]
