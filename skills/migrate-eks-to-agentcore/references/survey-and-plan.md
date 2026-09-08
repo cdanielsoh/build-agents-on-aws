@@ -110,25 +110,32 @@ in exactly one state:
                    └─────────────┘
 ```
 
-### The nodes, with their preconditions and substitutes
+### The nodes, with their preconditions, substitutes, and the one file each
 
-| Node | Needs | If unreachable, substitute |
-|---|---|---|
-| **A** shape: coded, declarative, or managed | S1 or S2 | none — if you have neither source nor control plane, say the assessment is not possible and stop |
-| **A1** read application source | S1 = yes, revision matches | if the repo is ahead of production, pin to the running build or drop to `read:cluster` only |
-| **A2** read resource specs and served schemas | S2 | source, explicitly labelled as possibly-not-deployed |
-| **B** logs and status conditions | S2 | nothing substitutes. This is the cheapest high-yield read and needs no permission — if it is unavailable, say what that costs |
-| **C** quotas, region availability, prices | S2 in *their* account | `list-aws-default-service-quotas` only, tagged defaults-only; every applied value `open (wrong account)` |
-| **D** Gate 0 blockers + Gate 0.0 liftability | C | gate against defaults and mark `compute_type_assumed` |
-| **E** intent-vs-effect sweep (dead controls, live controls with bad side effects) | A1 or A2 | on a declarative platform, diff what the resource declares against what the controller created |
-| **F** invoke the agent | **S4 = yes** | the tool's own logs; stored session rows; claimed capability vs the config that would implement it. A described feature with no wiring is the same finding |
-| **F1** check a tool's output against ground truth | F | the tool's RBAC — what it *could* return — plus its logs |
-| **F2** concurrency / cross-session behaviour | F | stored session and event rows, their ordering and timestamps |
-| **G** the 41 Lens questions | A | walk it regardless; mark rows `unknown` with the blocking node, never `absent` |
-| **H** the four measurements | S3 = deployment exists | all `open`; `cost_confidence.per_turn: unavailable` |
-| **I** concurrency sweep | **S5 = yes** and H | single-level numbers, explicitly labelled not-production |
-| **J** Gate 3 product questions | S6 = someone to ask | `engagement: internal_reference`; record the questions as `open_questions`, not as `undecided` rows |
-| **K** record and adoption path | G | — |
+**Each node points at exactly one reference.** If a node needs two files to perform, the split is
+wrong — say so rather than working around it.
+
+| Node | Needs | Read | If unreachable, substitute |
+|---|---|---|---|
+| **A** shape: coded, declarative, or managed | S1 or S2 | [read-the-shape.md](read-the-shape.md) | none — if you have neither source nor control plane, say the assessment is not possible and stop |
+| **A1** read application source | S1 = yes, revision matches | [read-the-repo.md](read-the-repo.md) | if the repo is ahead of production, pin to the running build or drop to `read:cluster` only |
+| **A2** read resource specs and served schemas | S2 | [read-the-cluster.md](read-the-cluster.md) | source, explicitly labelled as possibly-not-deployed |
+| **B** logs and status conditions | S2 | [read-the-cluster.md](read-the-cluster.md) | nothing substitutes. This is the cheapest high-yield read and needs no permission — if it is unavailable, say what that costs |
+| **C** quotas, region availability, prices | S2 in *their* account | [probe-aws.md](probe-aws.md) | `list-aws-default-service-quotas` only, tagged defaults-only; every applied value `open (wrong account)` |
+| **D** Gate 0 blockers + Gate 0.0 liftability | C | [constraints.md](constraints.md) | gate against defaults and mark `compute_type_assumed` |
+| **E** intent-vs-effect sweep (dead controls, live controls with bad side effects) | A1 or A2 | [sweep-for-dead-controls.md](sweep-for-dead-controls.md) | on a declarative platform, diff what the resource declares against what the controller created |
+| **F** invoke the agent | **S4 = yes** | [invoke-the-agent.md](invoke-the-agent.md) | the tool's own logs; stored session rows; claimed capability vs the config that would implement it. A described feature with no wiring is the same finding |
+| **F1** check a tool's output against ground truth | F | [invoke-the-agent.md](invoke-the-agent.md) | the tool's RBAC — what it *could* return — plus its logs |
+| **F2** concurrency / cross-session behaviour | F | [invoke-the-agent.md](invoke-the-agent.md) | stored session and event rows, their ordering and timestamps |
+| **G** the 41 Lens questions | A | [production-inventory.md](production-inventory.md) | walk it regardless; mark rows `unknown` with the blocking node, never `absent` |
+| **H** the four measurements | S3 = deployment exists | [measure.md](measure.md) | all `open`; `cost_confidence.per_turn: unavailable` |
+| **I** concurrency sweep | **S5 = yes** and H | [concurrency-sweep.md](concurrency-sweep.md) | single-level numbers, explicitly labelled not-production |
+| **J** Gate 3 product questions | S6 = someone to ask | [ask.md](ask.md) | `engagement: internal_reference`; record the questions as `open_questions`, not as `undecided` rows |
+| **K** record and adoption path | G | [record-and-adopt.md](record-and-adopt.md) | — |
+
+Cross-cutting, so not a node: [evidence.md](evidence.md) governs how every one of the above tags
+what it found, and [provenance.md](provenance.md) says which of this plugin's own claims are
+measured.
 
 ### Two properties worth preserving if this is ever restructured
 

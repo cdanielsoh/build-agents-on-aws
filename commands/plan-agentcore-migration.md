@@ -54,7 +54,8 @@ Refuse, and say why, if `recommendation` is `stay` (unless explicitly overridden
 
 **Check the record against the current instrument, not just against the system.** Records go
 stale two ways. Compare its schema to the current
-[assessment.md](../skills/migrate-eks-to-agentcore/references/assessment.md) and the
+[record-and-adopt.md](../skills/migrate-eks-to-agentcore/references/record-and-adopt.md) — which
+owns the confidence axes and the adoption-path rules — and to the
 `/assess-agentcore-migration` template, and note divergences at the top of the plan. Observed:
 a record carrying a single `confidence` field and quoting a rubric line that no longer exists,
 written weeks after the reference split it into two axes. A stale field silently reintroduces
