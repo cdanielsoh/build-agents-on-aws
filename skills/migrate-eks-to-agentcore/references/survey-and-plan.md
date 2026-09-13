@@ -23,6 +23,15 @@ Six questions. They are all about **access and permission**, which is why asking
 sales-script failure this skill warns about — you cannot derive whether you are allowed to do
 something. Everything *derivable* stays derivable; do not ask about architecture here.
 
+### Presenting the survey
+
+Introduce the survey in one short sentence in the user's language, then ask the unanswered
+questions and wait. For example: "먼저 접근 권한 서베이를 진행하겠습니다." or
+"I'll start with a brief access survey." In the introduction and progress updates, treat skill
+requirements, design rationale, and the table's "Why it gates something" column as internal guidance;
+explain them when the user asks. Keep brief descriptions of the real request and load effects
+needed for S4/S5 consent.
+
 | # | Ask | Why it gates something |
 |---|---|---|
 | S1 | Is there application source we can read, and is it the revision that is deployed? | Decides whether source reading is evidence or fiction. A repo ahead of production invalidates every `file:line` claim |
@@ -32,15 +41,16 @@ something. Everything *derivable* stays derivable; do not ask about architecture
 | S5 | May we generate load, and against what? | A concurrency sweep is load on a live service. Same consent class as S4, and more intrusive |
 | S6 | Who can answer product questions — retention needs, conversation end, compliance, on-call? | If nobody, Gate 3 is structurally unavailable and should say so rather than sitting `undecided` |
 
-Record the answers verbatim in `.agentcore-migration/access.yml` before doing anything else. If the
-customer cannot answer one, that is itself an answer — record `unknown` and treat the gated checks
-as unreachable.
+After receiving the answers, record them in `.agentcore-migration/access.yml` before any
+assessment checks. Preserve the customer's wording in YAML comments alongside the normalized
+fields. If the customer says they cannot answer one, record `unknown` and treat the gated checks
+as unreachable. An unanswered question is still pending; do not silently turn it into `unknown`.
 
-**Two of these answers are enforced, not advisory.** `invocation_permitted` and
-`load_generation_permitted` are read by a `PreToolUse` hook, which blocks the matching commands
-until the file says yes. Writing the permission down is what makes acting on it auditable — and the
-failure that motivates it happened: invocation was made a mandatory step and performed without
-asking anyone.
+**S4 and S5 are required before invocation and load generation.** On hosts that register the
+plugin's `PreToolUse` consent hook, it also reads `invocation_permitted` and
+`load_generation_permitted` and blocks matching commands until the file says yes.
+Follow the recorded permissions on every host. Writing them down makes acting on them
+auditable; invocation was previously made mandatory and performed without asking anyone.
 
 **A survey is not a questionnaire about their architecture.** If you find yourself asking what their
 session store is, stop: that is derivable, and asking it is the thing that costs trust.
@@ -156,8 +166,8 @@ is the difference between a finding and an omission.
 
 **Consent gates are explicit edges, not prose.** F and I depend on S4 and S5. That is why an
 assessor cannot reach them by enthusiasm, and why refusing them costs the findings named in the
-substitute column rather than silently producing a thinner record that looks complete. A hook now
-enforces both edges against `access.yml`.
+substitute column rather than silently producing a thinner record that looks complete. Where
+registered, the consent hook also checks both answers against `access.yml`.
 
 **Intent is computed; only what happened is stored.** Anything that records the *plan* in a file
 becomes a claim nobody checks. `resolve` derives the intended walk from the graph and the survey
@@ -178,14 +188,14 @@ surveyed_with: <name or role>          # absent means nobody was asked and acces
 access:
   source_available: true | false | unknown
   source_matches_deployment: true | false | unknown
-  control_plane_read: true | false
-  account_is_customers: true | false
-  deployment_exists: true | false
+  control_plane_read: true | false | unknown
+  account_is_customers: true | false | unknown
+  deployment_exists: true | false | unknown
   carries_real_traffic: true | false | unknown
   invocation_permitted: true | false | unknown      # S4 — also read by the PreToolUse consent hook
   invocation_environment: production | staging | pilot | none
   load_generation_permitted: true | false | unknown # S5
-  product_owner_reachable: true | false             # S6
+  product_owner_reachable: true | false | unknown   # S6
 ```
 
 Then:
