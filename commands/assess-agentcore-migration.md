@@ -34,6 +34,9 @@ schemas are
 Write the files — do not answer only conversationally.
 
 `--depth quick` walks only the starred practices and stops after Gate 2. Default is `full`.
+Record the chosen depth in `access.yml`; a resumed assessment keeps that depth unless the
+user changes it. `quick` produces `access.yml`, `receipts.jsonl`, `findings.yml`, and a short
+summary. The judgement, suggestions, and customer decisions in Steps 4–7 belong to `full`.
 
 **Say what `quick` costs, and pick on evidence rather than by default.** The stars mark what most
 often decides a *migration*, not what most often turns out to be broken — so `quick` can miss the
@@ -50,10 +53,11 @@ anything looks off, or when a `quick` pass already found something.
 
 ## Step 0 — Locate the service and the account
 
-If `$ARGUMENTS` names a repo path, use it. If empty, ask which repository holds the agent —
-do not guess or scan the filesystem.
+If `$ARGUMENTS` names a repo path, use it. If empty, ask which repository holds the agent
+alongside the Step 0.5 access questions. This step only identifies the target from the user's
+request; do not inspect source, credentials or the control plane before the survey is answered.
 
-State the AWS account and region you are inspecting before any API call. **Read-only
+After Step 0.5, state the AWS account and region you are inspecting before any API call. **Read-only
 throughout.** If the identity might be production, say so and confirm before proceeding.
 
 **Findings come from their code and their deployment — not from the internet.** Every claim in the
@@ -85,7 +89,13 @@ Six questions, all about **access and permission**. Asking them is not the quest
 skill warns about: you cannot derive whether you are allowed to do something. Everything derivable
 stays derivable — do not ask about their architecture here.
 
-Write the answers to `.agentcore-migration/access.yml`. That file is the only thing written up front.
+Ask the unanswered S1–S6 questions in the first reply and wait for the user's response.
+Reuse explicit answers from this conversation or an existing survey for the same service.
+Follow the skill entry point for missing answers, resumption, and resolving the plugin path.
+
+After the answers arrive, write `.agentcore-migration/access.yml` and run
+`scripts/lens_plan.py resolve --multi-agent unknown` before proceeding to Step 0.6.
+That survey is the only thing written up front.
 
 **Do not write the intended walk anywhere.** Earlier versions had you emit a `plan:` block listing
 every node's state before walking it. It was a stored copy of what `resolve` computes, and an
@@ -105,6 +115,7 @@ skipped, and "I was not permitted to look" was recorded as `absent`. A precondit
 dropped by anyone running low on context. A precondition in a graph does not — and `invocation_permitted`
 and `load_generation_permitted` are now enforced by a `PreToolUse` hook, which blocks the matching
 commands until `access.yml` says yes.
+The survey reference describes host coverage; the permission requirements apply on every host.
 
 ## Step 0.6 — Record as you go. This is not optional bookkeeping.
 
@@ -265,6 +276,13 @@ example in `receipts.md` is exactly this mistake, made and then corrected.
 
 If the numbers cannot be measured, record the receipt with `--tag open` and say the cost verdict is
 unavailable. **Do not substitute this plugin's reference figures as if they were the customer's.**
+
+**Finish `quick` here.** Regenerate `findings.yml` with `lens_plan.py findings`, run
+`lens_plan.py validate`, and summarise the findings, available cost evidence, and limitations.
+State that unstarred practices were not assessed; missing access or measurements stay explicit.
+Then end the assessment. Do not enter Steps 4–7, create `assessment.yml`, `suggestions.yml` or
+`decisions.yml`, or start planning. Continue below only for `full`; expand a `quick` assessment
+only when the user requests it.
 
 ## Step 4 — Gate 3: ask only the underivable
 

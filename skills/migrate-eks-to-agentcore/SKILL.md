@@ -1,53 +1,60 @@
 ---
 name: migrate-eks-to-agentcore
 description: >
-  Assess an existing agentic service running on Amazon EKS (or ECS, or any
-  self-managed container platform) against the AWS Well-Architected Agentic AI
-  Lens, then show which Amazon Bedrock AgentCore components would close each gap
-  — and which of those need no platform change at all. Migration is one possible
-  outcome, not the goal: keeping the current runtime and adopting Gateway,
-  Identity, Memory, Policy or Evaluations alongside it is a first-class result,
-  and so is deciding nothing yet. Use this skill whenever the user wants to know
-  where their agent stands, what a production-grade agent service requires, which
-  parts AgentCore actually replaces, the real cost comparison between
-  self-hosted and AgentCore, or is planning a phased move. Logs the walk as an
-  auditable receipt trail, proposes grouped changes for the customer to accept,
-  decline or defer, then generates a phased plan from their decisions alone.
-  Trigger on: migrate agent to AgentCore, EKS to AgentCore, move agent off
-  Kubernetes, should we use AgentCore or EKS, AgentCore vs EKS, AgentCore vs
-  self-managed, agent platform decision, agentic service on EKS, containerised
-  agent migration, replatform agent, agent migration assessment.
-  Trigger equally on the no-migration framings, which are the common case: assess
-  my agent on EKS, is my agent production ready, agent architecture review, agent
-  security review, what is missing from my agent, Well-Architected review for an
-  agent, can I use AgentCore without migrating, adopt AgentCore incrementally,
-  AgentCore Gateway in front of my existing agent, keep my agent on Kubernetes,
-  we are not ready to migrate, what would AgentCore give us.
-  Trigger on the constraints that decide it: 15-minute request timeout, ARM64
-  requirement for AgentCore, active session workload quota, new-session creation
-  rate, microVM per session, session affinity for agents, sticky sessions for
-  conversational agents, agent session store, ElastiCache session state for
-  agents, KEDA autoscaling for agents, HPA does not scale my agent, CPU-based
-  autoscaling for LLM workloads, SSE stream cut by ALB idle timeout, agent pod
-  cold start, pod-per-session, conversation lost on rollout, flush cadence for
-  conversation state, StopRuntimeSession cost, idleRuntimeSessionTimeout billing,
-  AgentCore memory billing, is AgentCore cheaper than EKS.
-  Trigger on the component domains an assessment must cover: outbound auth 2LO,
-  3LO, token propagation, token vault, workload identity, multi-tenant isolation,
-  tenant boundary, row-level security for agents, cost attribution per tenant,
-  self-hosted MCP servers, consolidating MCP servers behind a gateway,
-  short-term vs long-term agent memory, memory namespaces, RAG and retrieval ACLs,
-  vector store for agents, guardrails, PII redaction, prompt injection defence,
-  human-in-the-loop approval, audit trail for agents, non-repudiation,
-  agent evals, golden dataset, regression gate, idempotency for agent tools,
-  graceful degradation, prompt lifecycle management, multi-agent orchestration.
-  Also trigger when the user asks what a production-grade agent service requires,
-  which parts of one AgentCore actually replaces, or asks for an agent architecture
-  triage against the AWS Well-Architected Agentic AI Lens questions (AGENTOPS,
-  AGENTSEC, AGENTREL, AGENTPERF, AGENTCOST, AGENTSUS).
+  Assess an existing agentic service on Amazon EKS, ECS, or another self-managed
+  platform against the AWS Well-Architected Agentic AI Lens. Use for EKS-to-AgentCore
+  migration assessments, AgentCore vs self-hosted cost comparisons, production
+  readiness, architecture or security reviews, session/scaling constraints, and
+  incremental adoption of Gateway, Identity, Memory, Policy or Evaluations.
+  Keeping the current runtime and assess-only outcomes are supported. Starts with
+  an access and permission survey, records evidence, proposes changes for the
+  customer to accept, decline or defer, and plans only from their decisions.
 ---
 
 # Assessing an Agentic Service on EKS against AgentCore
+
+## Entry point — survey before assessment
+
+For an assessment request, perform these steps in order:
+
+1. **Read [survey-and-plan.md](references/survey-and-plan.md) now.** Before the survey,
+   read only this skill's instructions and, when resuming, the named assessment's existing
+   `access.yml`. Defer customer source inspection, AWS/kubectl calls, Gate 0, and other
+   assessment checks until access is established.
+2. **Ask the unanswered S1–S6 access questions in your first reply, then wait for the
+   user's answers.** Use the user's language and the wording guidance in
+   [survey-and-plan.md](references/survey-and-plan.md#presenting-the-survey).
+   Reuse explicit answers already supplied in the conversation or an existing survey for
+   this service; ask only what is missing.
+   If the target repository was not named, ask for it alongside the survey.
+   An accessible repo or configured credential is not an answer about permission.
+   Do not fill unanswered fields with guesses or `unknown` just to continue;
+   `unknown` records a user saying they cannot confirm.
+3. **After the answers arrive, write `.agentcore-migration/access.yml`** following the
+   reference schema, including `surveyed_with` and `depth`. For a new assessment, default
+   to `full` unless the user requests `quick`; when resuming, reuse the recorded depth
+   unless the user changes it. Then run `scripts/lens_plan.py resolve`
+   with `--multi-agent unknown` until topology is known. An existing survey can be reused
+   unless the user changes its scope; update changed answers before resolving again.
+4. **Follow [the assessment procedure](../../commands/assess-agentcore-migration.md)**
+   using the resolved access and recording receipts as you go; skip the setup and survey
+   steps already completed. State the account and region before any API call. When resuming,
+   run `status` to find unfinished work within the recorded depth. Apply the mode below,
+   subject to the resolved access preconditions and the existing Gate 0 blocker rules.
+
+| Depth | Inventory scope | Where to finish |
+|---|---|---|
+| `quick` | Starred practices only; state which unstarred practices were not assessed | Gates 0–2, then generate findings, validate, summarise the limited assessment, and stop. No Gate 3, judgement file, suggestions, or survey 2 |
+| `full` (default) | All 41 Lens questions, recording access limitations | Gates 0–3, judgement, suggestions, survey 2, then the final report and validation |
+
+For a planning request with an existing assessment, follow
+[the planning procedure](../../commands/plan-agentcore-migration.md); it requires the customer's
+recorded decisions. Do not restart a completed survey or invent decisions.
+
+**Paths on every host:** resolve links relative to this `SKILL.md`. The plugin root is two
+directories above it. Run the scripts from the assessed repository using that root's absolute,
+quoted path. References use `${CLAUDE_PLUGIN_ROOT}` as shorthand; in Kiro or another host where
+it is unset, substitute the actual plugin root rather than running `/scripts/lens_plan.py`.
 
 A customer runs an agent on EKS. It works. They want to know where it stands, and what AgentCore
 would do for them. The honest answer is *per component and conditional*, and the conditions are
@@ -75,7 +82,9 @@ is satisfied **by the platform** rather than by the customer's code, say so. **I
 vocabulary does not fit what you found, describe what you found.** A forced fit reads as
 inexperience to a customer whose stack differs.
 
-**1. Read and measure before asking.** Almost everything decisive is derivable from the customer's
+**1. After the access survey, read and measure before asking product questions.**
+The S1–S6 access questions above come first; this rule governs Gate 3.
+Almost everything decisive is derivable from the customer's
 repo, control plane and traffic. A questionnaire that asks what you could have read produces a sales
 script. Ask only what cannot be derived → [ask.md](references/ask.md).
 
@@ -92,9 +101,9 @@ plugin. Figures here show *which levers matter*, never the customer's number.
         survey 1  access & permission  (the only thing that cannot be derived)
         Gate 0    hard blockers        (minutes, binary, cheapest first)
         Gate 1    inventory walk       (read the code, against the Lens)
-        Gate 2    economics            (measure, then model)
-        Gate 3    the underivable      (ask — and only here)
-        survey 2  the customer decides (proceed / decline / defer-with-condition)
+        Gate 2    economics            (measure, then model; quick reports and stops here)
+        Gate 3    the underivable      (full only: ask — and only here)
+        survey 2  the customer decides (full only: proceed / decline / defer-with-condition)
                     ↓
 /plan-agentcore-migration              →  phased plan + scaffolding
         resolve which phases are even available, then act only on decisions
@@ -122,10 +131,8 @@ a **new receipt** — including a customer saying a finding is wrong, which is j
 Receipts carry supersession, so reinterpreting old evidence does not require fabricating a new
 observation → [receipts.md](references/receipts.md).
 
-**Start with the access survey, not with Gate 0.** Which checks are even reachable is the one thing
-that cannot be derived, and a precondition left in prose gets dropped →
-[survey-and-plan.md](references/survey-and-plan.md), then resolve the 41 questions and the 15 nodes
-against it with `scripts/lens_plan.py resolve`. **That output is the walk.** Nothing writes the
+Resolve the 41 questions and the 15 nodes against the completed access survey with
+`scripts/lens_plan.py resolve`. **That output is the walk.** Nothing writes the
 intended walk to a file: a stored plan can be both stale and asserted done.
 
 ## The four gates

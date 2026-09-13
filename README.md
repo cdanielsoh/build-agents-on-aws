@@ -42,6 +42,10 @@ kiro-cli chat --agent build-agents-on-aws
 Re-run the `sed` command if you move the clone. All four skills load as context resources and
 both MCP servers start automatically, regardless of which directory you run `kiro-cli` from.
 
+An assessment's first reply asks the unanswered S1–S6 access questions and waits for your answers.
+Only then does it write `access.yml`, resolve the available checks, and start Gate 0. Explicit
+answers already supplied, including a survey from a resumed assessment, are reused.
+
 Kiro CLI's slash commands are a fixed built-in set — skills do **not** register as slash
 commands the way they do in Claude Code and Codex. Invoke a skill by describing the task
 ("scaffold a new Strands agent in ./my-agent", "assess this EKS agent for AgentCore
